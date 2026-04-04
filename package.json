@@ -1,36 +1,35 @@
 {
   "name": "uvra-gloves",
   "version": "1.0.0",
+  "private": true,
   "description": "UVRA - Universal VR Application for DIY VR Gloves",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev:react\" \"wait-on http://localhost:3000 && npm run dev:electron\"",
-    "dev:react": "react-scripts start",
+    "dev": "concurrently \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
+    "dev:react": "vite",
     "dev:electron": "electron .",
-    "build": "react-scripts build && electron-builder",
-    "build:react": "react-scripts build"
+    "build": "vite build && electron-builder",
+    "build:react": "vite build",
+    "preview": "vite preview"
   },
-  "homepage": "./",
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "lucide-react": "^0.263.1",
-    "framer-motion": "^10.16.4",
-    "electron-is-dev": "^2.0.0"
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "lucide-react": "^0.475.0",
+    "framer-motion": "^12.6.3"
   },
   "devDependencies": {
-    "electron": "^27.0.0",
-    "electron-builder": "^24.6.4",
-    "concurrently": "^8.2.1",
-    "wait-on": "^7.0.1",
-    "tailwindcss": "^3.3.3",
-    "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.31"
-  },
-  "browserslist": {
-    "production": [">0.2%", "not dead", "not op_mini all"],
-    "development": ["last 1 chrome version"]
+    "electron": "^41.1.1",
+    "electron-builder": "^26.8.1",
+    "concurrently": "^9.1.2",
+    "wait-on": "^8.0.3",
+    "@vitejs/plugin-react": "^4.4.1",
+    "vite": "^6.2.6",
+    "tailwindcss": "^3.4.17",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.1"
   },
   "build": {
     "appId": "com.uvra.gloves",
@@ -39,7 +38,7 @@
       "buildResources": "assets"
     },
     "files": [
-      "build/**/*",
+      "dist/**/*",
       "electron/**/*"
     ],
     "win": {

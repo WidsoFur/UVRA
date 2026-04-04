@@ -1,8 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const http = require('http');
-const { exec } = require('child_process');
 const EventEmitter = require('events');
 const os = require('os');
 
@@ -18,8 +15,7 @@ const os = require('os');
  * - Check driver status
  */
 
-const GITHUB_RELEASE_API = 'https://api.github.com/repos/LucidVR/opengloves-driver/releases/latest';
-const DRIVER_FOLDER_NAME = 'openglove';
+const DRIVER_FOLDER_NAME = 'opengloves';
 
 class DriverManager extends EventEmitter {
   constructor() {
@@ -132,7 +128,7 @@ class DriverManager extends EventEmitter {
     }
 
     const driverBinDir = path.join(this.driverPath, 'bin', 'win64');
-    const driverDll = path.join(driverBinDir, 'driver_openglove.dll');
+    const driverDll = path.join(driverBinDir, 'driver_opengloves.dll');
     const driverManifest = path.join(this.driverPath, 'driver.vrdrivermanifest');
 
     if (fs.existsSync(driverDll) && fs.existsSync(driverManifest)) {
@@ -148,117 +144,22 @@ class DriverManager extends EventEmitter {
   }
 
   /**
-   * Get latest release download URL from GitHub
+   * Get path to bundled driver included with the app
    */
-  getLatestReleaseUrl() {
-    return new Promise((resolve, reject) => {
-      const options = {
-        hostname: 'api.github.com',
-        path: '/repos/LucidVR/opengloves-driver/releases/latest',
-        headers: { 'User-Agent': 'UVRA-Gloves/1.0' },
-      };
+  getBundledDriverPath() {
+    // In development: project_root/opengloves
+    // In production: resources/opengloves (packed with electron-builder)
+    const { app } = require('electron');
+    const devPath = path.join(__dirname, '..', DRIVER_FOLDER_NAME);
+    const prodPath = path.join(path.dirname(app.getAppPath()), DRIVER_FOLDER_NAME);
 
-      https.get(options, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          try {
-            const release = JSON.parse(data);
-            if (release.assets) {
-              const asset = release.assets.find(a =>
-                a.name.toLowerCase().includes('openglove') &&
-                a.name.toLowerCase().endsWith('.zip')
-              );
-              if (asset) {
-                resolve({
-                  url: asset.browser_download_url,
-                  name: asset.name,
-                  version: release.tag_name,
-                });
-                return;
-              }
-            }
-            reject(new Error('Не найден архив драйвера в последнем релизе'));
-          } catch (e) {
-            reject(e);
-          }
-        });
-      }).on('error', reject);
-    });
+    if (fs.existsSync(devPath)) return devPath;
+    if (fs.existsSync(prodPath)) return prodPath;
+    return null;
   }
 
   /**
-   * Download a file from URL, following redirects
-   */
-  downloadFile(url, destPath) {
-    return new Promise((resolve, reject) => {
-      this.emit('log', 'info', `Скачивание: ${url}`);
-      this.emit('downloadProgress', 0);
-
-      const makeRequest = (requestUrl) => {
-        const lib = requestUrl.startsWith('https') ? https : http;
-        lib.get(requestUrl, { headers: { 'User-Agent': 'UVRA-Gloves/1.0' } }, (res) => {
-          // Handle redirects
-          if (res.statusCode === 301 || res.statusCode === 302) {
-            makeRequest(res.headers.location);
-            return;
-          }
-
-          if (res.statusCode !== 200) {
-            reject(new Error(`HTTP ${res.statusCode}`));
-            return;
-          }
-
-          const totalSize = parseInt(res.headers['content-length'] || '0', 10);
-          let downloaded = 0;
-
-          const file = fs.createWriteStream(destPath);
-          res.on('data', (chunk) => {
-            downloaded += chunk.length;
-            if (totalSize > 0) {
-              this.emit('downloadProgress', Math.round(downloaded / totalSize * 100));
-            }
-          });
-          res.pipe(file);
-          file.on('finish', () => {
-            file.close();
-            this.emit('downloadProgress', 100);
-            resolve(destPath);
-          });
-        }).on('error', (err) => {
-          fs.unlink(destPath, () => {});
-          reject(err);
-        });
-      };
-
-      makeRequest(url);
-    });
-  }
-
-  /**
-   * Extract zip file using PowerShell (Windows built-in)
-   */
-  extractZip(zipPath, destDir) {
-    return new Promise((resolve, reject) => {
-      this.emit('log', 'info', 'Распаковка драйвера...');
-
-      if (!fs.existsSync(destDir)) {
-        fs.mkdirSync(destDir, { recursive: true });
-      }
-
-      const psCommand = `Expand-Archive -Path "${zipPath}" -DestinationPath "${destDir}" -Force`;
-      exec(`powershell -Command "${psCommand}"`, (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`Ошибка распаковки: ${stderr || error.message}`));
-        } else {
-          resolve(destDir);
-        }
-      });
-    });
-  }
-
-  /**
-   * Full installation: download, extract, place in SteamVR/drivers/
+   * Full installation: copy bundled driver to SteamVR/drivers/
    */
   async install() {
     try {
@@ -277,47 +178,24 @@ class DriverManager extends EventEmitter {
         throw new Error(`Папка drivers не найдена: ${driversDir}`);
       }
 
-      // 2. Get latest release info
-      this.emit('log', 'info', 'Поиск последней версии драйвера...');
-      const release = await this.getLatestReleaseUrl();
-      this.emit('log', 'info', `Найдена версия: ${release.version}`);
-
-      // 3. Download to temp
-      const tempDir = path.join(os.tmpdir(), 'uvra-driver');
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
+      // 2. Find bundled driver
+      const bundledPath = this.getBundledDriverPath();
+      if (!bundledPath) {
+        throw new Error('Драйвер OpenGloves не найден в составе приложения');
       }
-      const zipPath = path.join(tempDir, release.name);
-      await this.downloadFile(release.url, zipPath);
+      this.emit('log', 'info', `Источник драйвера: ${bundledPath}`);
 
-      // 4. Extract
-      const extractDir = path.join(tempDir, 'extracted');
-      await this.extractZip(zipPath, extractDir);
-
-      // 5. Find the openglove folder in extracted files
-      const opengloveSource = this.findDriverFolder(extractDir);
-      if (!opengloveSource) {
-        throw new Error('Папка openglove не найдена в архиве');
-      }
-
-      // 6. Copy to SteamVR/drivers/
+      // 3. Copy to SteamVR/drivers/
       const targetPath = path.join(driversDir, DRIVER_FOLDER_NAME);
       this.emit('log', 'info', `Установка в: ${targetPath}`);
-      this.copyFolderSync(opengloveSource, targetPath);
+      this.copyFolderSync(bundledPath, targetPath);
 
-      // 7. Cleanup temp files
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (e) {
-        // non-critical
-      }
-
-      // 8. Configure for Named Pipes
+      // 4. Configure for Named Pipes
+      this.driverPath = targetPath;
       await this.configureForNamedPipes();
 
       this.installed = true;
       this.status = 'configured';
-      this.driverPath = targetPath;
       this.emit('log', 'success', 'Драйвер OpenGloves успешно установлен и настроен!');
       this.emit('status', 'configured');
       return true;
@@ -331,26 +209,33 @@ class DriverManager extends EventEmitter {
   }
 
   /**
-   * Recursively find the openglove driver folder in extracted files
+   * Register driver path in openvrpaths.vrpath external_drivers
+   * (alternative to copying into SteamVR/drivers/)
    */
-  findDriverFolder(dir) {
-    const items = fs.readdirSync(dir);
-    for (const item of items) {
-      const fullPath = path.join(dir, item);
-      const stat = fs.statSync(fullPath);
-      if (stat.isDirectory()) {
-        if (item.toLowerCase() === DRIVER_FOLDER_NAME || item.toLowerCase() === 'openglove') {
-          // Verify it's a valid driver folder
-          if (fs.existsSync(path.join(fullPath, 'driver.vrdrivermanifest'))) {
-            return fullPath;
-          }
-        }
-        // Search deeper
-        const found = this.findDriverFolder(fullPath);
-        if (found) return found;
+  registerExternalDriver(driverPath) {
+    const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
+    try {
+      if (!fs.existsSync(vrpathFile)) {
+        this.emit('log', 'warning', 'openvrpaths.vrpath не найден');
+        return false;
       }
+
+      const data = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
+      if (!data.external_drivers) {
+        data.external_drivers = [];
+      }
+
+      const normalized = driverPath.replace(/\\/g, '\\\\');
+      if (!data.external_drivers.includes(driverPath) && !data.external_drivers.includes(normalized)) {
+        data.external_drivers.push(driverPath);
+        fs.writeFileSync(vrpathFile, JSON.stringify(data, null, '\t'), 'utf8');
+        this.emit('log', 'success', `Драйвер зарегистрирован в openvrpaths.vrpath`);
+      }
+      return true;
+    } catch (e) {
+      this.emit('log', 'error', `Ошибка регистрации драйвера: ${e.message}`);
+      return false;
     }
-    return null;
   }
 
   /**
@@ -377,31 +262,12 @@ class DriverManager extends EventEmitter {
 
   /**
    * Configure OpenGloves driver to use Named Pipes instead of Serial.
-   * Writes settings to SteamVR's settings file.
+   * Modifies the driver's default.vrsettings file.
    */
   async configureForNamedPipes() {
     this.emit('log', 'info', 'Настройка драйвера для Named Pipes...');
 
-    // Settings are stored in Steam\config\steamvr.vrsettings
-    const settingsPaths = [
-      path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'steamvr.vrsettings'),
-    ];
-
-    // Also try finding via Steam path
-    const steamPaths = [
-      'C:\\Program Files (x86)\\Steam\\config\\steamvr.vrsettings',
-      'C:\\Program Files\\Steam\\config\\steamvr.vrsettings',
-    ];
-
-    let settingsPath = null;
-    for (const p of [...settingsPaths, ...steamPaths]) {
-      if (fs.existsSync(p)) {
-        settingsPath = p;
-        break;
-      }
-    }
-
-    // OpenGloves also reads from its own default.vrsettings in the driver folder
+    // OpenGloves reads from its own default.vrsettings in the driver folder
     const driverSettingsPath = this.driverPath
       ? path.join(this.driverPath, 'resources', 'settings', 'default.vrsettings')
       : null;
@@ -410,46 +276,29 @@ class DriverManager extends EventEmitter {
       try {
         let settings = JSON.parse(fs.readFileSync(driverSettingsPath, 'utf8'));
 
-        // Set communication method to Named Pipes for both hands
-        if (settings['driver_openglove']) {
-          settings['driver_openglove']['communication_protocol'] = 'namedpipe';
-        }
-        // Write settings for left hand
-        const leftKey = 'driver_openglove_left';
-        if (!settings[leftKey]) settings[leftKey] = {};
-        settings[leftKey]['communication_protocol'] = 'namedpipe';
-        settings[leftKey]['enabled'] = true;
+        // Enable driver
+        if (!settings['driver_opengloves']) settings['driver_opengloves'] = {};
+        settings['driver_opengloves']['enable'] = true;
+        settings['driver_opengloves']['left_enabled'] = true;
+        settings['driver_opengloves']['right_enabled'] = true;
 
-        // Write settings for right hand
-        const rightKey = 'driver_openglove_right';
-        if (!settings[rightKey]) settings[rightKey] = {};
-        settings[rightKey]['communication_protocol'] = 'namedpipe';
-        settings[rightKey]['enabled'] = true;
+        // Disable serial and bluetooth, enable Named Pipes
+        if (settings['communication_serial']) {
+          settings['communication_serial']['enable'] = false;
+        }
+        if (settings['communication_btserial']) {
+          settings['communication_btserial']['enable'] = false;
+        }
+        if (!settings['communication_namedpipe']) settings['communication_namedpipe'] = {};
+        settings['communication_namedpipe']['enable'] = true;
 
         fs.writeFileSync(driverSettingsPath, JSON.stringify(settings, null, 2), 'utf8');
         this.emit('log', 'success', 'Настройки драйвера обновлены (Named Pipes)');
       } catch (e) {
         this.emit('log', 'warning', `Не удалось обновить настройки драйвера: ${e.message}`);
       }
-    }
-
-    // Also configure global SteamVR settings if found
-    if (settingsPath) {
-      try {
-        let steamSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-
-        if (!steamSettings['driver_openglove']) {
-          steamSettings['driver_openglove'] = {};
-        }
-        steamSettings['driver_openglove']['communication_protocol'] = 'namedpipe';
-        steamSettings['driver_openglove']['left_enabled'] = true;
-        steamSettings['driver_openglove']['right_enabled'] = true;
-
-        fs.writeFileSync(settingsPath, JSON.stringify(steamSettings, null, 2), 'utf8');
-        this.emit('log', 'success', 'Глобальные настройки SteamVR обновлены');
-      } catch (e) {
-        this.emit('log', 'warning', `Не удалось обновить steamvr.vrsettings: ${e.message}`);
-      }
+    } else {
+      this.emit('log', 'warning', 'Файл default.vrsettings не найден');
     }
   }
 
