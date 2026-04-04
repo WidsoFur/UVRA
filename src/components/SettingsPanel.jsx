@@ -1,8 +1,59 @@
-import React, { useState } from 'react';
-import { Wifi, Save, RotateCcw, Info, Server, Plug } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Wifi, Save, RotateCcw, Info, Server, Plug, Cpu, Trash2, Hand } from 'lucide-react';
 
 function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer, onStopServer }) {
   const [localPort, setLocalPort] = useState(serverPort);
+  const [devices, setDevices] = useState({});
+  const [discoveredDevices, setDiscoveredDevices] = useState(new Map());
+
+  // Load saved devices on mount
+  useEffect(() => {
+    if (!window.uvra) return;
+    window.uvra.deviceGetAll().then(setDevices);
+  }, []);
+
+  // Listen for newly discovered devices
+  useEffect(() => {
+    if (!window.uvra) return;
+    const unsub = window.uvra.onDeviceDiscovered((info) => {
+      setDiscoveredDevices(prev => {
+        const next = new Map(prev);
+        next.set(info.mac, info);
+        return next;
+      });
+    });
+    return () => unsub && unsub();
+  }, []);
+
+  const handleAssignHand = async (mac, hand) => {
+    if (!window.uvra) return;
+    const existing = devices[mac];
+    await window.uvra.deviceSet(mac, hand, existing?.name || mac);
+    const updated = await window.uvra.deviceGetAll();
+    setDevices(updated);
+  };
+
+  const handleRenameDevice = async (mac, name) => {
+    if (!window.uvra) return;
+    const existing = devices[mac];
+    if (!existing) return;
+    await window.uvra.deviceSet(mac, existing.hand, name);
+    const updated = await window.uvra.deviceGetAll();
+    setDevices(updated);
+  };
+
+  const handleRemoveDevice = async (mac) => {
+    if (!window.uvra) return;
+    await window.uvra.deviceRemove(mac);
+    const updated = await window.uvra.deviceGetAll();
+    setDevices(updated);
+  };
+
+  // Merge saved + discovered devices for display
+  const allMacs = new Set([
+    ...Object.keys(devices),
+    ...discoveredDevices.keys(),
+  ]);
 
   const handleSave = () => {
     const port = parseInt(localPort);
@@ -65,6 +116,89 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Device Management */}
+        <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Cpu size={16} className="text-uvra-accent" />
+            <h2 className="text-sm font-semibold text-uvra-text">Устройства</h2>
+          </div>
+
+          {allMacs.size === 0 ? (
+            <div className="text-xs text-uvra-text-dim p-3 bg-uvra-bg rounded-lg">
+              Устройства не обнаружены. Запустите сервер и включите перчатку — она найдётся автоматически.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {[...allMacs].map(mac => {
+                const saved = devices[mac];
+                const discovered = discoveredDevices.get(mac);
+                const isOnline = !!discovered;
+                const hand = saved?.hand || discovered?.hand || null;
+                const name = saved?.name || mac;
+
+                return (
+                  <div key={mac} className="p-3 bg-uvra-bg rounded-lg flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${isOnline ? 'bg-uvra-success' : 'bg-uvra-text-dim'}`} />
+
+                    <div className="flex-1 min-w-0">
+                      <input
+                        className="text-xs font-medium text-uvra-text bg-transparent border-b border-transparent hover:border-uvra-border focus:border-uvra-accent outline-none w-full truncate"
+                        value={name}
+                        onChange={(e) => {
+                          // Update local state immediately
+                          setDevices(prev => ({
+                            ...prev,
+                            [mac]: { ...prev[mac], name: e.target.value, hand: hand || 'left' },
+                          }));
+                        }}
+                        onBlur={(e) => handleRenameDevice(mac, e.target.value)}
+                      />
+                      <div className="text-[10px] text-uvra-text-dim font-mono mt-0.5">
+                        {mac}
+                        {discovered?.address && <span className="ml-2">{discovered.address}</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleAssignHand(mac, 'left')}
+                        className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${
+                          hand === 'left'
+                            ? 'bg-uvra-accent/30 text-uvra-accent-light'
+                            : 'bg-uvra-border/50 text-uvra-text-dim hover:bg-uvra-border'
+                        }`}
+                      >
+                        L
+                      </button>
+                      <button
+                        onClick={() => handleAssignHand(mac, 'right')}
+                        className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${
+                          hand === 'right'
+                            ? 'bg-uvra-accent/30 text-uvra-accent-light'
+                            : 'bg-uvra-border/50 text-uvra-text-dim hover:bg-uvra-border'
+                        }`}
+                      >
+                        R
+                      </button>
+                      <button
+                        onClick={() => handleRemoveDevice(mac)}
+                        className="p-1 rounded text-uvra-text-dim hover:text-uvra-danger hover:bg-uvra-danger/10 transition-colors ml-1"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <p className="text-[11px] text-uvra-text-dim mt-3">
+            Перчатки находятся автоматически по UDP broadcast. Назначьте руку (L/R) для каждого устройства —
+            привязка сохраняется по MAC-адресу.
+          </p>
         </div>
 
         {/* OpenGloves Settings */}

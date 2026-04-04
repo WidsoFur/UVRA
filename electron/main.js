@@ -3,12 +3,14 @@ const path = require('path');
 const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
+const DeviceStore = require('./device-store');
 
 let mainWindow;
 let udpServer;
 let leftPipe;
 let rightPipe;
 let driverManager;
+let deviceStore;
 
 const isDev = !app.isPackaged;
 
@@ -45,6 +47,7 @@ function initServices() {
   rightPipe = new NamedPipeClient('right');
   udpServer = new UDPServer();
   driverManager = new DriverManager();
+  deviceStore = new DeviceStore();
 
   // Forward driver manager events to renderer
   driverManager.on('log', (type, message) => {
@@ -69,7 +72,29 @@ function initServices() {
   driverManager.findSteamVR();
   driverManager.checkInstalled();
 
+  // When a device is discovered via broadcast, notify the renderer
+  udpServer.on('deviceDiscovered', (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const storedDevice = deviceStore.getDevice(info.mac);
+      mainWindow.webContents.send('device-discovered', {
+        mac: info.mac,
+        address: info.address,
+        hand: storedDevice ? storedDevice.hand : null,
+        name: storedDevice ? storedDevice.name : null,
+      });
+    }
+  });
+
   udpServer.on('gloveData', (data) => {
+    // If device has a MAC and a stored hand assignment, override the hand from firmware
+    if (data.mac) {
+      const storedHand = deviceStore.getHand(data.mac);
+      if (storedHand) {
+        data.hand = storedHand;
+      }
+      deviceStore.touch(data.mac);
+    }
+
     const pipe = data.hand === 'left' ? leftPipe : rightPipe;
     pipe.sendData(data);
 
@@ -79,6 +104,13 @@ function initServices() {
   });
 
   udpServer.on('gloveConnected', (info) => {
+    // If MAC is known, override hand from store
+    if (info.mac) {
+      const storedHand = deviceStore.getHand(info.mac);
+      if (storedHand) {
+        info.hand = storedHand;
+      }
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('glove-connected', info);
     }
@@ -185,6 +217,27 @@ function setupIPC() {
       installed: driverManager.checkInstalled(),
       ...driverManager.getStatus(),
     };
+  });
+
+  // Device store IPC
+  ipcMain.handle('device-get-all', () => {
+    return deviceStore ? deviceStore.getAllDevices() : {};
+  });
+
+  ipcMain.handle('device-set', (_, { mac, hand, name }) => {
+    if (deviceStore) {
+      deviceStore.setDevice(mac, hand, name);
+      return { success: true };
+    }
+    return { success: false };
+  });
+
+  ipcMain.handle('device-remove', (_, mac) => {
+    if (deviceStore) {
+      deviceStore.removeDevice(mac);
+      return { success: true };
+    }
+    return { success: false };
   });
 
   ipcMain.on('window-minimize', () => mainWindow?.minimize());

@@ -8,6 +8,16 @@ contextBridge.exposeInMainWorld('uvra', {
   getStatus: () => ipcRenderer.invoke('get-status'),
   calibrate: (hand) => ipcRenderer.invoke('calibrate', hand),
 
+  // Device management (MAC-based)
+  deviceGetAll: () => ipcRenderer.invoke('device-get-all'),
+  deviceSet: (mac, hand, name) => ipcRenderer.invoke('device-set', { mac, hand, name }),
+  deviceRemove: (mac) => ipcRenderer.invoke('device-remove', mac),
+  onDeviceDiscovered: (callback) => {
+    const listener = (_, info) => callback(info);
+    ipcRenderer.on('device-discovered', listener);
+    return () => ipcRenderer.removeListener('device-discovered', listener);
+  },
+
   // Driver management
   driverGetStatus: () => ipcRenderer.invoke('driver-get-status'),
   driverInstall: () => ipcRenderer.invoke('driver-install'),
