@@ -41,6 +41,8 @@ class UDPServer extends EventEmitter {
     this.connectedGloves = new Map();
     this.timeoutInterval = null;
     this.TIMEOUT_MS = 3000;
+    this.discoveryServer = null;
+    this.discoveryPort = 7776;
   }
 
   start(port = 7777) {
@@ -61,13 +63,15 @@ class UDPServer extends EventEmitter {
         try {
           const data = this.parseMessage(msg, rinfo);
           if (data) {
-            const key = `${rinfo.address}:${data.hand}`;
+            const mac = data.mac || null;
+            const key = mac || `${rinfo.address}:${data.hand}`;
             const isNew = !this.connectedGloves.has(key);
 
             this.connectedGloves.set(key, {
               address: rinfo.address,
               port: rinfo.port,
               hand: data.hand,
+              mac,
               lastSeen: Date.now(),
             });
 
@@ -75,6 +79,7 @@ class UDPServer extends EventEmitter {
               this.emit('gloveConnected', {
                 address: rinfo.address,
                 hand: data.hand,
+                mac,
               });
             }
 
@@ -89,9 +94,48 @@ class UDPServer extends EventEmitter {
         this.running = true;
         this.port = port;
         this.startTimeoutChecker();
+        this.startDiscovery();
         resolve();
       });
     });
+  }
+
+  /**
+   * Start listening for ESP32 discovery broadcasts on the discovery port.
+   * When a "UVRA_DISCOVER:<MAC>" packet arrives, respond with "UVRA_ACK:<dataPort>"
+   * so the ESP32 knows where to send data.
+   */
+  startDiscovery() {
+    if (this.discoveryServer) return;
+
+    this.discoveryServer = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+    this.discoveryServer.on('message', (msg, rinfo) => {
+      const str = msg.toString('utf8').trim();
+      if (str.startsWith('UVRA_DISCOVER:')) {
+        const mac = str.substring(14);
+        const response = `UVRA_ACK:${this.port}`;
+
+        this.discoveryServer.send(response, rinfo.port, rinfo.address, (err) => {
+          if (err) console.error('Discovery response error:', err.message);
+        });
+
+        this.emit('deviceDiscovered', { mac, address: rinfo.address });
+      }
+    });
+
+    this.discoveryServer.on('error', (err) => {
+      console.error('Discovery server error:', err.message);
+    });
+
+    this.discoveryServer.bind(this.discoveryPort, '0.0.0.0');
+  }
+
+  stopDiscovery() {
+    if (this.discoveryServer) {
+      try { this.discoveryServer.close(); } catch (e) {}
+      this.discoveryServer = null;
+    }
   }
 
   stop() {
@@ -99,6 +143,7 @@ class UDPServer extends EventEmitter {
       clearInterval(this.timeoutInterval);
       this.timeoutInterval = null;
     }
+    this.stopDiscovery();
     if (this.server) {
       try {
         this.server.close();
@@ -177,6 +222,7 @@ class UDPServer extends EventEmitter {
       menu: !!buttons.menu,
       calibrate: !!buttons.calibrate,
       triggerValue: json.triggerValue || 0,
+      mac: json.mac || null,
       source: rinfo.address,
     };
   }
@@ -307,6 +353,7 @@ class UDPServer extends EventEmitter {
     return Array.from(this.connectedGloves.values()).map(g => ({
       address: g.address,
       hand: g.hand,
+      mac: g.mac,
       lastSeen: g.lastSeen,
     }));
   }

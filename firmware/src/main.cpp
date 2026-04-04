@@ -2,35 +2,73 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
+#include "config.h"
 
-// ===== НАСТРОЙКИ WiFi =====
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
-
-// ===== НАСТРОЙКИ UVRA =====
-const char* UVRA_IP   = "192.168.1.100";  // IP компьютера с UVRA
-const int   UVRA_PORT = 7777;
-const char* HAND      = "left";            // "left" или "right"
-
-// ===== ПИНЫ ДАТЧИКОВ =====
-const int FLEX_PINS[5] = {36, 39, 34, 35, 32}; // Thumb, Index, Middle, Ring, Pinky
-const int JOY_X_PIN = 33;
-const int JOY_Y_PIN = 25;
-const int JOY_BTN_PIN = 26;
-const int BTN_A_PIN = 27;
-const int BTN_B_PIN = 14;
-const int TRIGGER_PIN = 12;
+// ===== ПИНЫ =====
+const int FLEX_PINS[5] = {
+  FLEX_THUMB_PIN, FLEX_INDEX_PIN, FLEX_MIDDLE_PIN, FLEX_RING_PIN, FLEX_PINKY_PIN
+};
 
 // ===== КАЛИБРОВКА =====
-int flexMin[5] = {0, 0, 0, 0, 0};
-int flexMax[5] = {4095, 4095, 4095, 4095, 4095};
+int flexMin[5] = { FLEX_THUMB_MIN, FLEX_INDEX_MIN, FLEX_MIDDLE_MIN, FLEX_RING_MIN, FLEX_PINKY_MIN };
+int flexMax[5] = { FLEX_THUMB_MAX, FLEX_INDEX_MAX, FLEX_MIDDLE_MAX, FLEX_RING_MAX, FLEX_PINKY_MAX };
 
-WiFiUDP udp;
-StaticJsonDocument<512> doc;
+// ===== СЕТЬ =====
+WiFiUDP udpData;
+WiFiUDP udpDiscovery;
+
+String macAddress;
+IPAddress serverIP;
+int serverDataPort = UVRA_DATA_PORT;
+bool serverFound = false;
+unsigned long lastDiscovery = 0;
+
+// ===== ФУНКЦИИ =====
+
+String getMacAddress() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char buf[18];
+  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(buf);
+}
 
 float mapFlex(int raw, int minVal, int maxVal) {
   float val = (float)(raw - minVal) / (float)(maxVal - minVal);
   return constrain(val, 0.0f, 1.0f);
+}
+
+void sendDiscovery() {
+  // Отправляем broadcast-пакет для обнаружения UVRA на всех машинах в сети
+  String packet = "UVRA_DISCOVER:" + macAddress;
+
+  udpDiscovery.beginPacket(IPAddress(255, 255, 255, 255), UVRA_DISCOVERY_PORT);
+  udpDiscovery.write((const uint8_t*)packet.c_str(), packet.length());
+  udpDiscovery.endPacket();
+}
+
+void checkDiscoveryResponse() {
+  int packetSize = udpDiscovery.parsePacket();
+  if (packetSize > 0) {
+    char buf[64];
+    int len = udpDiscovery.read(buf, sizeof(buf) - 1);
+    buf[len] = '\0';
+
+    String response = String(buf);
+    // Ожидаем ответ формата: "UVRA_ACK:<dataPort>"
+    if (response.startsWith("UVRA_ACK:")) {
+      serverIP = udpDiscovery.remoteIP();
+      serverDataPort = response.substring(9).toInt();
+      if (serverDataPort <= 0) serverDataPort = UVRA_DATA_PORT;
+      serverFound = true;
+
+      Serial.print("Server found: ");
+      Serial.print(serverIP);
+      Serial.print(":");
+      Serial.println(serverDataPort);
+    }
+  }
 }
 
 void setup() {
@@ -48,7 +86,7 @@ void setup() {
   pinMode(TRIGGER_PIN, INPUT);
 
   // Подключение к WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -58,40 +96,60 @@ void setup() {
   Serial.print("Connected! IP: ");
   Serial.println(WiFi.localIP());
 
-  udp.begin(UVRA_PORT);
+  macAddress = getMacAddress();
+  Serial.print("MAC: ");
+  Serial.println(macAddress);
+
+  // Запускаем UDP сокеты
+  udpData.begin(UVRA_DATA_PORT + 1);     // локальный порт для отправки данных
+  udpDiscovery.begin(UVRA_DISCOVERY_PORT); // для приёма ответов discovery
 }
 
 void loop() {
-  // Чтение датчиков сгибания
+  // === АВТООБНАРУЖЕНИЕ ===
+  // Всегда проверяем ответы discovery (даже если сервер уже найден — на случай смены IP)
+  checkDiscoveryResponse();
+
+  if (!serverFound || (millis() - lastDiscovery > DISCOVERY_INTERVAL)) {
+    sendDiscovery();
+    lastDiscovery = millis();
+  }
+
+  // Если сервер не найден, не отправляем данные
+  if (!serverFound) {
+    delay(100);
+    return;
+  }
+
+  // === ЧТЕНИЕ ДАТЧИКОВ ===
   float flex[5];
   for (int i = 0; i < 5; i++) {
     int raw = analogRead(FLEX_PINS[i]);
     flex[i] = mapFlex(raw, flexMin[i], flexMax[i]);
   }
 
-  // Чтение джойстика
   float joyX = (analogRead(JOY_X_PIN) - 2048.0f) / 2048.0f;
   float joyY = (analogRead(JOY_Y_PIN) - 2048.0f) / 2048.0f;
   bool joyBtn = !digitalRead(JOY_BTN_PIN);
 
-  // Чтение кнопок
   bool btnA = !digitalRead(BTN_A_PIN);
   bool btnB = !digitalRead(BTN_B_PIN);
   float trigVal = analogRead(TRIGGER_PIN) / 4095.0f;
   bool trigBtn = trigVal > 0.8f;
 
-  // Формирование JSON
-  doc.clear();
+  // === ФОРМИРОВАНИЕ JSON ===
+  StaticJsonDocument<512> doc;
   doc["hand"] = HAND;
+  doc["mac"] = macAddress;
 
   JsonObject fingers = doc.createNestedObject("fingers");
   const char* fingerNames[] = {"thumb", "index", "middle", "ring", "pinky"};
   for (int i = 0; i < 5; i++) {
     JsonArray arr = fingers.createNestedArray(fingerNames[i]);
-    arr.add(0.0f);       // joint 0 (carpometacarpal)
-    arr.add(flex[i]);    // joint 1 (metacarpophalangeal)
-    arr.add(flex[i]);    // joint 2 (proximal interphalangeal)
-    arr.add(i == 0 ? 0.0f : flex[i]); // joint 3 (distal, не для большого)
+    arr.add(0.0f);
+    arr.add(flex[i]);
+    arr.add(flex[i]);
+    arr.add(i == 0 ? 0.0f : flex[i]);
   }
 
   JsonArray splay = doc.createNestedArray("splay");
@@ -111,13 +169,13 @@ void loop() {
 
   doc["triggerValue"] = trigVal;
 
-  // Отправка UDP
+  // === ОТПРАВКА ===
   char buffer[512];
   size_t len = serializeJson(doc, buffer, sizeof(buffer));
 
-  udp.beginPacket(UVRA_IP, UVRA_PORT);
-  udp.write((uint8_t*)buffer, len);
-  udp.endPacket();
+  udpData.beginPacket(serverIP, serverDataPort);
+  udpData.write((uint8_t*)buffer, len);
+  udpData.endPacket();
 
-  delay(10); // ~100 Гц
+  delay(SEND_INTERVAL_MS);
 }
