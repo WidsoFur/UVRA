@@ -116,26 +116,49 @@ class DriverManager extends EventEmitter {
 
   /**
    * Check if OpenGloves driver is already installed
+   * Checks both SteamVR/drivers/ and external_drivers registration
    */
   checkInstalled() {
     if (!this.steamVRPath) {
       this.findSteamVR();
     }
 
-    if (!this.driverPath) {
-      this.status = 'not_found';
-      return false;
+    // Check bundled driver registered as external
+    const bundledPath = this.getBundledDriverPath();
+    if (bundledPath) {
+      const driverDll = path.join(bundledPath, 'bin', 'win64', 'driver_opengloves.dll');
+      const driverManifest = path.join(bundledPath, 'driver.vrdrivermanifest');
+      if (fs.existsSync(driverDll) && fs.existsSync(driverManifest)) {
+        const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
+        try {
+          if (fs.existsSync(vrpathFile)) {
+            const data = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
+            const registered = (data.external_drivers || []).some(p => {
+              const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
+              return normalized === bundledPath;
+            });
+            if (registered) {
+              this.driverPath = bundledPath;
+              this.installed = true;
+              this.status = 'configured';
+              this.emit('log', 'success', 'Драйвер OpenGloves установлен (external)');
+              return true;
+            }
+          }
+        } catch (e) { /* continue */ }
+      }
     }
 
-    const driverBinDir = path.join(this.driverPath, 'bin', 'win64');
-    const driverDll = path.join(driverBinDir, 'driver_opengloves.dll');
-    const driverManifest = path.join(this.driverPath, 'driver.vrdrivermanifest');
-
-    if (fs.existsSync(driverDll) && fs.existsSync(driverManifest)) {
-      this.installed = true;
-      this.status = 'installed';
-      this.emit('log', 'success', 'Драйвер OpenGloves установлен');
-      return true;
+    // Fallback: check SteamVR/drivers/opengloves/
+    if (this.driverPath) {
+      const driverDll = path.join(this.driverPath, 'bin', 'win64', 'driver_opengloves.dll');
+      const driverManifest = path.join(this.driverPath, 'driver.vrdrivermanifest');
+      if (fs.existsSync(driverDll) && fs.existsSync(driverManifest)) {
+        this.installed = true;
+        this.status = 'installed';
+        this.emit('log', 'success', 'Драйвер OpenGloves установлен');
+        return true;
+      }
     }
 
     this.status = 'not_found';
@@ -173,11 +196,6 @@ class DriverManager extends EventEmitter {
         throw new Error('SteamVR не найден. Убедитесь, что Steam и SteamVR установлены.');
       }
 
-      const driversDir = path.join(this.steamVRPath, 'drivers');
-      if (!fs.existsSync(driversDir)) {
-        throw new Error(`Папка drivers не найдена: ${driversDir}`);
-      }
-
       // 2. Find bundled driver
       const bundledPath = this.getBundledDriverPath();
       if (!bundledPath) {
@@ -185,18 +203,21 @@ class DriverManager extends EventEmitter {
       }
       this.emit('log', 'info', `Источник драйвера: ${bundledPath}`);
 
-      // 3. Copy to SteamVR/drivers/
-      const targetPath = path.join(driversDir, DRIVER_FOLDER_NAME);
-      this.emit('log', 'info', `Установка в: ${targetPath}`);
-      this.copyFolderSync(bundledPath, targetPath);
-
-      // 4. Configure for Named Pipes
-      this.driverPath = targetPath;
+      // 3. Configure bundled driver for Named Pipes (in-place)
+      this.driverPath = bundledPath;
       await this.configureForNamedPipes();
+
+      // 4. Register as external driver (no admin rights needed)
+      this.emit('log', 'info', 'Регистрация драйвера через openvrpaths.vrpath...');
+      const registered = this.registerExternalDriver(bundledPath);
+      if (!registered) {
+        throw new Error('Не удалось зарегистрировать драйвер в openvrpaths.vrpath');
+      }
 
       this.installed = true;
       this.status = 'configured';
       this.emit('log', 'success', 'Драйвер OpenGloves успешно установлен и настроен!');
+      this.emit('log', 'info', 'Перезапустите SteamVR для применения изменений.');
       this.emit('status', 'configured');
       return true;
 
@@ -303,19 +324,31 @@ class DriverManager extends EventEmitter {
   }
 
   /**
-   * Uninstall the driver from SteamVR
+   * Uninstall the driver — remove from openvrpaths.vrpath external_drivers
    */
   uninstall() {
-    if (!this.driverPath || !fs.existsSync(this.driverPath)) {
-      this.emit('log', 'warning', 'Драйвер не найден для удаления');
-      return false;
-    }
-
+    const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
     try {
-      fs.rmSync(this.driverPath, { recursive: true, force: true });
+      if (!fs.existsSync(vrpathFile)) {
+        this.emit('log', 'warning', 'openvrpaths.vrpath не найден');
+        return false;
+      }
+
+      const data = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
+      if (data.external_drivers && data.external_drivers.length > 0) {
+        const bundledPath = this.getBundledDriverPath();
+        data.external_drivers = data.external_drivers.filter(p => {
+          const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
+          return normalized !== bundledPath && normalized !== this.driverPath;
+        });
+        fs.writeFileSync(vrpathFile, JSON.stringify(data, null, '\t'), 'utf8');
+      }
+
       this.installed = false;
       this.status = 'not_found';
-      this.emit('log', 'info', 'Драйвер OpenGloves удалён');
+      this.emit('log', 'info', 'Драйвер OpenGloves удалён из openvrpaths.vrpath');
+      this.emit('log', 'info', 'Перезапустите SteamVR для применения изменений.');
+      this.emit('status', 'not_found');
       return true;
     } catch (e) {
       this.emit('log', 'error', `Ошибка удаления: ${e.message}`);

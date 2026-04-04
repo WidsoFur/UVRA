@@ -4,6 +4,7 @@ const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
 const DeviceStore = require('./device-store');
+const { discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings } = require('./steamvr-devices');
 
 let mainWindow;
 let udpServer;
@@ -11,8 +12,16 @@ let leftPipe;
 let rightPipe;
 let driverManager;
 let deviceStore;
+let devEmulatorInterval = null;
+let isQuitting = false;
 
 const isDev = !app.isPackaged;
+
+function safeSend(channel, data) {
+  if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -37,6 +46,13 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      gracefulShutdown();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -45,27 +61,32 @@ function createWindow() {
 function initServices() {
   leftPipe = new NamedPipeClient('left');
   rightPipe = new NamedPipeClient('right');
+
+  // Handle pipe errors gracefully to prevent unhandled exceptions
+  leftPipe.on('error', (err) => {
+    console.error('[NamedPipe] Left pipe error:', err.error || err);
+    safeSend('pipe-error', { hand: 'left', error: err.error || err });
+  });
+  rightPipe.on('error', (err) => {
+    console.error('[NamedPipe] Right pipe error:', err.error || err);
+    safeSend('pipe-error', { hand: 'right', error: err.error || err });
+  });
+
   udpServer = new UDPServer();
   driverManager = new DriverManager();
   deviceStore = new DeviceStore();
 
   // Forward driver manager events to renderer
   driverManager.on('log', (type, message) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('driver-log', { type, message });
-    }
+    safeSend('driver-log', { type, message });
   });
 
   driverManager.on('status', (status) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('driver-status', status);
-    }
+    safeSend('driver-status', status);
   });
 
   driverManager.on('downloadProgress', (percent) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('driver-download-progress', percent);
-    }
+    safeSend('driver-download-progress', percent);
   });
 
   // Auto-check driver on startup
@@ -74,15 +95,13 @@ function initServices() {
 
   // When a device is discovered via broadcast, notify the renderer
   udpServer.on('deviceDiscovered', (info) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      const storedDevice = deviceStore.getDevice(info.mac);
-      mainWindow.webContents.send('device-discovered', {
-        mac: info.mac,
-        address: info.address,
-        hand: storedDevice ? storedDevice.hand : null,
-        name: storedDevice ? storedDevice.name : null,
-      });
-    }
+    const storedDevice = deviceStore.getDevice(info.mac);
+    safeSend('device-discovered', {
+      mac: info.mac,
+      address: info.address,
+      hand: storedDevice ? storedDevice.hand : null,
+      name: storedDevice ? storedDevice.name : null,
+    });
   });
 
   udpServer.on('gloveData', (data) => {
@@ -98,9 +117,7 @@ function initServices() {
     const pipe = data.hand === 'left' ? leftPipe : rightPipe;
     pipe.sendData(data);
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('glove-data', data);
-    }
+    safeSend('glove-data', data);
   });
 
   udpServer.on('gloveConnected', (info) => {
@@ -111,21 +128,15 @@ function initServices() {
         info.hand = storedHand;
       }
     }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('glove-connected', info);
-    }
+    safeSend('glove-connected', info);
   });
 
   udpServer.on('gloveDisconnected', (info) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('glove-disconnected', info);
-    }
+    safeSend('glove-disconnected', info);
   });
 
   udpServer.on('error', (err) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('server-error', err.message);
-    }
+    safeSend('server-error', err.message);
   });
 }
 
@@ -240,6 +251,116 @@ function setupIPC() {
     return { success: false };
   });
 
+  // Dev mode emulator — send fake glove data to pipe and UI
+  ipcMain.handle('dev-emulator-send', (_, data) => {
+    const pipe = data.hand === 'left' ? leftPipe : rightPipe;
+    pipe.sendData(data);
+
+    safeSend('glove-data', data);
+    return { success: true };
+  });
+
+  ipcMain.handle('dev-emulator-start', (_, { hand, fps }) => {
+    if (devEmulatorInterval) clearInterval(devEmulatorInterval);
+
+    let t = 0;
+    devEmulatorInterval = setInterval(() => {
+      t += 0.05;
+      const wave = (offset) => (Math.sin(t + offset) + 1) / 2;
+
+      const data = {
+        hand,
+        flexion: [
+          [wave(0), wave(0.2), wave(0.4), wave(0.6)],
+          [wave(1), wave(1.2), wave(1.4), wave(1.6)],
+          [wave(2), wave(2.2), wave(2.4), wave(2.6)],
+          [wave(3), wave(3.2), wave(3.4), wave(3.6)],
+          [wave(4), wave(4.2), wave(4.4), wave(4.6)],
+        ],
+        splay: [wave(0.5), wave(1.5), wave(2.5), wave(3.5), wave(4.5)],
+        joyX: Math.sin(t) * 0.5,
+        joyY: Math.cos(t) * 0.5,
+        joyButton: false,
+        trgButton: false,
+        aButton: false,
+        bButton: false,
+        grab: wave(0) > 0.8,
+        pinch: wave(1) > 0.8,
+        menu: false,
+        calibrate: false,
+        triggerValue: wave(2),
+      };
+
+      const pipe = hand === 'left' ? leftPipe : rightPipe;
+      pipe.sendData(data);
+
+      safeSend('glove-data', data);
+    }, 1000 / (fps || 30));
+
+    return { success: true };
+  });
+
+  ipcMain.handle('dev-emulator-stop', () => {
+    if (devEmulatorInterval) {
+      clearInterval(devEmulatorInterval);
+      devEmulatorInterval = null;
+    }
+    return { success: true };
+  });
+
+  // Tracking reference — discover SteamVR devices from vrserver log
+  ipcMain.handle('tracking-get-devices', async () => {
+    try {
+      const devices = discoverDevicesFromLog();
+      // Also check if the OpenGloves driver is reachable
+      const driverSettings = await getDriverSettings();
+      return {
+        success: true,
+        devices,
+        driverRunning: driverSettings.success,
+        currentOverride: driverSettings.success ? {
+          enabled: driverSettings.settings?.pose_settings?.controller_override || false,
+          left: driverSettings.settings?.pose_settings?.controller_override_left,
+          right: driverSettings.settings?.pose_settings?.controller_override_right,
+        } : null,
+      };
+    } catch (err) {
+      return { success: false, devices: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle('tracking-bind', async (_, { hand, deviceId }) => {
+    try {
+      const role = hand === 'left' ? 1 : 2; // TrackedControllerRole_LeftHand=1, RightHand=2
+
+      // Approach 1: POST to internal server (port 52061) for immediate effect
+      const postResult = await postTrackingReference(deviceId, role);
+
+      // Approach 2: Set controller_override via external server (port 52060) as persistent fallback
+      // First get current settings to preserve the other hand's value
+      const currentSettings = await getDriverSettings();
+      let leftId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_left || 0) : 0;
+      let rightId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_right || 0) : 0;
+
+      if (hand === 'left') leftId = deviceId;
+      else rightId = deviceId;
+
+      const overrideResult = await setControllerOverride(leftId, rightId);
+
+      return {
+        success: postResult.success || overrideResult.success,
+        hand,
+        deviceId,
+        methods: {
+          internalServer: postResult.success,
+          controllerOverride: overrideResult.success,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.on('window-minimize', () => mainWindow?.minimize());
   ipcMain.on('window-maximize', () => {
     if (mainWindow?.isMaximized()) {
@@ -251,17 +372,54 @@ function setupIPC() {
   ipcMain.on('window-close', () => mainWindow?.close());
 }
 
+function gracefulShutdown() {
+  if (isQuitting) return;
+  isQuitting = true;
+
+  // 1. Stop dev emulator
+  if (devEmulatorInterval) {
+    clearInterval(devEmulatorInterval);
+    devEmulatorInterval = null;
+  }
+
+  // 2. Remove all event listeners from services to prevent writes to destroyed window
+  if (udpServer) udpServer.removeAllListeners();
+  if (leftPipe) leftPipe.removeAllListeners();
+  if (rightPipe) rightPipe.removeAllListeners();
+  if (driverManager) driverManager.removeAllListeners();
+
+  // 3. Stop UDP server (closes sockets)
+  try { if (udpServer) udpServer.stop(); } catch (e) {}
+
+  // 4. Disconnect pipes
+  try { if (leftPipe) leftPipe.disconnect(); } catch (e) {}
+  try { if (rightPipe) rightPipe.disconnect(); } catch (e) {}
+
+  // 5. Destroy window and quit
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+  }
+
+  // 6. Force quit after short delay as safety net
+  setTimeout(() => {
+    app.exit(0);
+  }, 500);
+
+  app.quit();
+}
+
 app.whenReady().then(() => {
   createWindow();
   initServices();
   setupIPC();
 });
 
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
-  if (udpServer) udpServer.stop();
-  if (leftPipe) leftPipe.disconnect();
-  if (rightPipe) rightPipe.disconnect();
-  app.quit();
+  gracefulShutdown();
 });
 
 app.on('activate', () => {

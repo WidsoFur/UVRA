@@ -196,6 +196,7 @@ function App() {
               serverRunning={serverRunning}
               onStartServer={handleStartServer}
               onStopServer={handleStopServer}
+              onLog={addLog}
             />
           )}
         </main>

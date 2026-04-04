@@ -195,35 +195,6 @@ function DriverPanel({ onLog }) {
           </div>
         </div>
 
-        {/* How it works */}
-        <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
-          <h3 className="text-sm font-semibold text-uvra-text mb-3">Как это работает</h3>
-          <div className="space-y-3 text-xs text-uvra-text-dim leading-relaxed">
-            <div className="flex gap-3 items-start">
-              <div className="w-6 h-6 rounded-lg bg-uvra-accent/20 flex items-center justify-center shrink-0 text-uvra-accent font-bold text-[10px]">1</div>
-              <p>UVRA автоматически скачивает OpenGloves драйвер с GitHub и устанавливает его в папку <code className="text-uvra-accent">SteamVR/drivers/</code></p>
-            </div>
-            <div className="flex gap-3 items-start">
-              <div className="w-6 h-6 rounded-lg bg-uvra-accent/20 flex items-center justify-center shrink-0 text-uvra-accent font-bold text-[10px]">2</div>
-              <p>Драйвер настраивается на коммуникацию через <strong className="text-uvra-text">Named Pipes</strong> (вместо USB/Bluetooth Serial)</p>
-            </div>
-            <div className="flex gap-3 items-start">
-              <div className="w-6 h-6 rounded-lg bg-uvra-accent/20 flex items-center justify-center shrink-0 text-uvra-accent font-bold text-[10px]">3</div>
-              <p>При запуске SteamVR драйвер создаёт виртуальные контроллеры-перчатки и ожидает данных через pipe</p>
-            </div>
-            <div className="flex gap-3 items-start">
-              <div className="w-6 h-6 rounded-lg bg-uvra-accent/20 flex items-center justify-center shrink-0 text-uvra-accent font-bold text-[10px]">4</div>
-              <p>UVRA принимает данные от перчаток по WiFi и передаёт их в pipe → драйвер → SteamVR</p>
-            </div>
-          </div>
-
-          <div className="mt-4 p-3 bg-uvra-bg rounded-lg">
-            <p className="text-[11px] text-uvra-accent font-mono text-center">
-              ESP32 →<span className="text-uvra-text-dim"> WiFi/UDP </span>→ UVRA →<span className="text-uvra-text-dim"> Named Pipe </span>→ OpenGloves →<span className="text-uvra-text-dim"> SteamVR</span>
-            </p>
-          </div>
-        </div>
-
         {/* Driver log */}
         {logs.length > 0 && (
           <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">

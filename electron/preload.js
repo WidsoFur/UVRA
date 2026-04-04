@@ -61,6 +61,15 @@ contextBridge.exposeInMainWorld('uvra', {
     return () => ipcRenderer.removeListener('server-error', listener);
   },
 
+  // Tracking reference
+  trackingGetDevices: () => ipcRenderer.invoke('tracking-get-devices'),
+  trackingBind: (hand, deviceId) => ipcRenderer.invoke('tracking-bind', { hand, deviceId }),
+
+  // Dev emulator
+  devEmulatorSend: (data) => ipcRenderer.invoke('dev-emulator-send', data),
+  devEmulatorStart: (hand, fps) => ipcRenderer.invoke('dev-emulator-start', { hand, fps }),
+  devEmulatorStop: () => ipcRenderer.invoke('dev-emulator-stop'),
+
   windowMinimize: () => ipcRenderer.send('window-minimize'),
   windowMaximize: () => ipcRenderer.send('window-maximize'),
   windowClose: () => ipcRenderer.send('window-close'),

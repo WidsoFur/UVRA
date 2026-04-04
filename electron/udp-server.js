@@ -133,7 +133,11 @@ class UDPServer extends EventEmitter {
 
   stopDiscovery() {
     if (this.discoveryServer) {
-      try { this.discoveryServer.close(); } catch (e) {}
+      try {
+        this.discoveryServer.removeAllListeners();
+        this.discoveryServer.unref();
+        this.discoveryServer.close();
+      } catch (e) {}
       this.discoveryServer = null;
     }
   }
@@ -146,6 +150,8 @@ class UDPServer extends EventEmitter {
     this.stopDiscovery();
     if (this.server) {
       try {
+        this.server.removeAllListeners();
+        this.server.unref();
         this.server.close();
       } catch (e) {}
       this.server = null;

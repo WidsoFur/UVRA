@@ -2,21 +2,29 @@
 
 // ===== ВЫБОР ПЛАТЫ =====
 // Раскомментируйте одну из строк:
+
+
 #define BOARD_ESP32
-// #define BOARD_ESP32_S3
+//#define BOARD_ESP32_S3
+
 
 // ===== НАСТРОЙКИ WiFi =====
-#define WIFI_SSID     "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID     "WIFI"
+#define WIFI_PASSWORD "PASSWORD"
 
 // ===== НАСТРОЙКИ UVRA =====
+// ТУТ НИЧЕГО НЕ ТРОГАЙ, ЕСЛИ НЕ ЗНАЕШЬ ЧТО ДЕЛАЕШЬ
+
 // Порт для отправки данных (должен совпадать с портом в приложении UVRA)
 #define UVRA_DATA_PORT     7777
 // Порт для автообнаружения (discovery)
 #define UVRA_DISCOVERY_PORT 7776
 // Интервал отправки discovery-запросов (мс)
 #define DISCOVERY_INTERVAL  2000
-// Рука: "left" или "right"
+
+// ===== РУКА =====
+// Рука: "left" или "right" на каждый контроллер отдельно. Можно поставить unknown тогда надо будет указать в приложении
+
 #define HAND               "left"
 
 // ===== ПИНЫ ДАТЧИКОВ =====
@@ -25,42 +33,42 @@
 // #define FLEX_THUMB_PIN  4
 
 // --- Дефолтные пины для каждой платы ---
-#if defined(BOARD_ESP32)
+#if defined(BOARD_ESP32) //<---------------------  Тебе нужны вот эти
   // ESP32 classic: ADC1 каналы на GPIO 32-39
   #ifndef FLEX_THUMB_PIN
-    #define FLEX_THUMB_PIN   36
+    #define FLEX_THUMB_PIN   36  //<---------------------  Большой палец
   #endif
   #ifndef FLEX_INDEX_PIN
-    #define FLEX_INDEX_PIN   39
+    #define FLEX_INDEX_PIN   39  //<---------------------  Указательный палец
   #endif
   #ifndef FLEX_MIDDLE_PIN
-    #define FLEX_MIDDLE_PIN  34
+    #define FLEX_MIDDLE_PIN  34  //<---------------------  Средний палец
   #endif
   #ifndef FLEX_RING_PIN
-    #define FLEX_RING_PIN    35
+    #define FLEX_RING_PIN    35  //<---------------------  Безымянный палец
   #endif
   #ifndef FLEX_PINKY_PIN
-    #define FLEX_PINKY_PIN   32
+    #define FLEX_PINKY_PIN   37  //<---------------------  Мизинец
   #endif
 
   #ifndef JOY_X_PIN
-    #define JOY_X_PIN        33
+    #define JOY_X_PIN        32  //<---------------------  Крестовина X
   #endif
   #ifndef JOY_Y_PIN
-    #define JOY_Y_PIN        25
+    #define JOY_Y_PIN        33  //<---------------------  Крестовина Y
   #endif
   #ifndef JOY_BTN_PIN
-    #define JOY_BTN_PIN      26
+    #define JOY_BTN_PIN      25  //<---------------------  Крестовина кнопка
   #endif
 
   #ifndef BTN_A_PIN
-    #define BTN_A_PIN        27
+    #define BTN_A_PIN        27  //<---------------------  Кнопка A
   #endif
   #ifndef BTN_B_PIN
-    #define BTN_B_PIN        14
+    #define BTN_B_PIN        14  //<---------------------  Кнопка B
   #endif
   #ifndef TRIGGER_PIN
-    #define TRIGGER_PIN      12
+    #define TRIGGER_PIN      12  //<---------------------  Курок
   #endif
 
 #elif defined(BOARD_ESP32_S3)

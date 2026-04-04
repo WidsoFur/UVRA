@@ -1,10 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Wifi, Save, RotateCcw, Info, Server, Plug, Cpu, Trash2, Hand } from 'lucide-react';
+import { Wifi, Save, Server, Cpu, Trash2, Code, Crosshair, RefreshCw } from 'lucide-react';
+import DevEmulator from './DevEmulator';
 
-function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer, onStopServer }) {
+function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer, onStopServer, onLog }) {
   const [localPort, setLocalPort] = useState(serverPort);
   const [devices, setDevices] = useState({});
   const [discoveredDevices, setDiscoveredDevices] = useState(new Map());
+  const [steamvrDevices, setSteamvrDevices] = useState([]);
+  const [selectedLeft, setSelectedLeft] = useState('');
+  const [selectedRight, setSelectedRight] = useState('');
+  const [bindingStatus, setBindingStatus] = useState({});
+  const [driverRunning, setDriverRunning] = useState(false);
+  const [loadingDevices, setLoadingDevices] = useState(false);
 
   // Load saved devices on mount
   useEffect(() => {
@@ -54,6 +61,48 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
     ...Object.keys(devices),
     ...discoveredDevices.keys(),
   ]);
+
+  const loadSteamVRDevices = useCallback(async () => {
+    if (!window.uvra) return;
+    setLoadingDevices(true);
+    try {
+      const result = await window.uvra.trackingGetDevices();
+      if (result.success) {
+        setSteamvrDevices(result.devices || []);
+        setDriverRunning(result.driverRunning || false);
+        // Pre-select current override values if available
+        if (result.currentOverride?.enabled) {
+          if (result.currentOverride.left) setSelectedLeft(String(result.currentOverride.left));
+          if (result.currentOverride.right) setSelectedRight(String(result.currentOverride.right));
+        }
+      }
+    } catch (err) {
+      onLog?.('error', `Ошибка загрузки устройств: ${err.message}`);
+    }
+    setLoadingDevices(false);
+  }, [onLog]);
+
+  // Load SteamVR devices on mount
+  useEffect(() => {
+    loadSteamVRDevices();
+  }, [loadSteamVRDevices]);
+
+  const handleTrackingBind = async (hand) => {
+    if (!window.uvra) return;
+    const id = parseInt(hand === 'left' ? selectedLeft : selectedRight);
+    if (isNaN(id) || id < 0) {
+      onLog?.('error', `Выберите устройство для ${hand === 'left' ? 'левой' : 'правой'} руки`);
+      return;
+    }
+    const result = await window.uvra.trackingBind(hand, id);
+    if (result.success) {
+      setBindingStatus(prev => ({ ...prev, [hand]: id }));
+      const methodInfo = result.methods?.internalServer ? 'напрямую' : 'через override';
+      onLog?.('success', `${hand === 'left' ? 'Левая' : 'Правая'} рука привязана к устройству #${id} (${methodInfo})`);
+    } else {
+      onLog?.('error', `Ошибка привязки: ${result.error || 'драйвер не запущен'}`);
+    }
+  };
 
   const handleSave = () => {
     const port = parseInt(localPort);
@@ -195,87 +244,90 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
             </div>
           )}
 
-          <p className="text-[11px] text-uvra-text-dim mt-3">
-            Перчатки находятся автоматически по UDP broadcast. Назначьте руку (L/R) для каждого устройства —
-            привязка сохраняется по MAC-адресу.
-          </p>
         </div>
 
-        {/* OpenGloves Settings */}
+        {/* Tracking Reference */}
+        <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Crosshair size={16} className="text-uvra-accent" />
+              <h2 className="text-sm font-semibold text-uvra-text">Привязка позиции</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${driverRunning ? 'bg-uvra-success/20 text-uvra-success' : 'bg-uvra-text-dim/20 text-uvra-text-dim'}`}>
+                {driverRunning ? 'Драйвер активен' : 'Драйвер не найден'}
+              </span>
+              <button
+                onClick={loadSteamVRDevices}
+                disabled={loadingDevices}
+                className="p-1.5 rounded-lg text-uvra-text-dim hover:text-uvra-accent hover:bg-uvra-accent/10 transition-colors"
+                title="Обновить список устройств"
+              >
+                <RefreshCw size={13} className={loadingDevices ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+
+          {steamvrDevices.length === 0 ? (
+            <div className="text-xs text-uvra-text-dim p-3 bg-uvra-bg rounded-lg">
+              {loadingDevices
+                ? 'Загрузка устройств...'
+                : 'SteamVR устройства не найдены. Убедитесь что SteamVR запущен и шлем подключён.'}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {['left', 'right'].map((hand) => {
+                const bindableDevices = steamvrDevices.filter(d =>
+                  d.confirmed && d.type !== 'opengloves'
+                );
+                const selected = hand === 'left' ? selectedLeft : selectedRight;
+                const setSelected = hand === 'left' ? setSelectedLeft : setSelectedRight;
+
+                return (
+                  <div key={hand} className="space-y-1.5">
+                    <label className="text-xs text-uvra-text-dim">
+                      {hand === 'left' ? 'Левая рука' : 'Правая рука'}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={selected}
+                        onChange={(e) => setSelected(e.target.value)}
+                        className="flex-1 bg-uvra-bg border border-uvra-border rounded-lg px-3 py-2 text-sm text-uvra-text focus:border-uvra-accent focus:outline-none transition-colors appearance-none cursor-pointer"
+                      >
+                        <option value="">-- Выберите устройство --</option>
+                        {bindableDevices.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            #{d.id} — {d.model || d.serial} {d.role ? `(${d.role === 'left_hand' ? 'L' : d.role === 'right_hand' ? 'R' : ''})` : ''} [{d.driver}]
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleTrackingBind(hand)}
+                        disabled={!selected}
+                        className="px-3 py-2 bg-uvra-accent/20 text-uvra-accent-light rounded-lg text-xs font-medium hover:bg-uvra-accent/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        Привязать
+                      </button>
+                      {bindingStatus[hand] != null && (
+                        <span className="text-[10px] text-uvra-success shrink-0">#{bindingStatus[hand]}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Dev Emulator */}
         <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
           <div className="flex items-center gap-2 mb-4">
-            <Plug size={16} className="text-uvra-accent" />
-            <h2 className="text-sm font-semibold text-uvra-text">OpenGloves</h2>
+            <Code size={16} className="text-uvra-warning" />
+            <h2 className="text-sm font-semibold text-uvra-text">Dev Mode — Эмулятор</h2>
           </div>
-
-          <div className="space-y-3">
-            <div className="flex items-start gap-3 p-3 bg-uvra-bg rounded-lg">
-              <Info size={14} className="text-uvra-accent mt-0.5 shrink-0" />
-              <div className="text-xs text-uvra-text-dim leading-relaxed">
-                <p className="mb-2">
-                  Для работы необходим установленный драйвер <strong className="text-uvra-text">OpenGloves</strong> из Steam.
-                </p>
-                <p className="mb-2">
-                  Программа подключается к драйверу через Named Pipes (v2 протокол) и передаёт данные о сгибании пальцев,
-                  положении джойстика и состоянии кнопок.
-                </p>
-                <p>
-                  <strong className="text-uvra-text">Pipe путь:</strong><br />
-                  <code className="text-uvra-accent text-[10px]">\\.\pipe\vrapplication\input\glove\v2\left|right</code>
-                </p>
-              </div>
-            </div>
-          </div>
+          <DevEmulator onLog={onLog} />
         </div>
 
-        {/* WiFi Protocol Info */}
-        <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Info size={16} className="text-uvra-accent" />
-            <h2 className="text-sm font-semibold text-uvra-text">Протокол WiFi</h2>
-          </div>
-
-          <div className="text-xs text-uvra-text-dim leading-relaxed space-y-3">
-            <p>Программа принимает данные по UDP в нескольких форматах:</p>
-
-            <div className="p-3 bg-uvra-bg rounded-lg">
-              <p className="text-uvra-text font-medium mb-1">JSON формат (рекомендуется)</p>
-              <pre className="text-[10px] text-uvra-accent overflow-x-auto whitespace-pre">
-{`{
-  "hand": "left",
-  "fingers": {
-    "thumb":  [0.0, 0.2, 0.3, 0.0],
-    "index":  [0.0, 0.5, 0.6, 0.4],
-    "middle": [0.0, 0.7, 0.8, 0.6],
-    "ring":   [0.0, 0.3, 0.4, 0.2],
-    "pinky":  [0.0, 0.1, 0.2, 0.1]
-  },
-  "splay": [0.5, 0.5, 0.5, 0.5, 0.5],
-  "joystick": { "x": 0.0, "y": 0.0 },
-  "buttons": {
-    "trigger": false, "A": false,
-    "B": false, "grab": false
-  },
-  "triggerValue": 0.0
-}`}
-              </pre>
-            </div>
-
-            <div className="p-3 bg-uvra-bg rounded-lg">
-              <p className="text-uvra-text font-medium mb-1">Простой строковый формат</p>
-              <pre className="text-[10px] text-uvra-accent">
-{`hand:left,max:4095,A:2048,B:1024,C:512,D:3000,E:100`}
-              </pre>
-            </div>
-
-            <div className="p-3 bg-uvra-bg rounded-lg">
-              <p className="text-uvra-text font-medium mb-1">Бинарный формат (114 байт)</p>
-              <p className="text-[10px]">
-                1 байт (hand) + 80 байт (flexion) + 20 байт (splay) + 8 байт (joy) + 1 байт (buttons) + 4 байт (trigger)
-              </p>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

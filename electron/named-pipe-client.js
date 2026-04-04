@@ -32,6 +32,7 @@ class NamedPipeClient extends EventEmitter {
     this.pipeName = `\\\\.\\pipe\\vrapplication\\input\\glove\\v2\\${hand}`;
     this.pipe = null;
     this.connected = false;
+    this.writing = false;
     this.reconnectTimer = null;
     this.calibrationOffset = {
       flexion: Array(5).fill(null).map(() => Array(4).fill(0)),
@@ -70,8 +71,11 @@ class NamedPipeClient extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.writing = false;
     if (this.pipe) {
       try {
+        this.pipe.removeAllListeners();
+        this.pipe.unref();
         this.pipe.destroy();
       } catch (e) {}
       this.pipe = null;
@@ -142,15 +146,19 @@ class NamedPipeClient extends EventEmitter {
   }
 
   sendData(data) {
-    if (!this.connected || !this.pipe) {
+    if (!this.connected || !this.pipe || this.writing) {
       return false;
     }
 
     try {
       const packed = this.packData(data);
-      this.pipe.write(packed);
+      this.writing = true;
+      this.pipe.write(packed, () => {
+        this.writing = false;
+      });
       return true;
     } catch (err) {
+      this.writing = false;
       this.connected = false;
       this.emit('error', { hand: this.hand, error: err.message });
       return false;
