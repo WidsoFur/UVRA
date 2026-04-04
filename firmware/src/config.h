@@ -52,13 +52,13 @@
   #endif
 
   #ifndef JOY_X_PIN
-    #define JOY_X_PIN        32  //<---------------------  Крестовина X
+    #define JOY_X_PIN        32  //<---------------------  Стик X
   #endif
   #ifndef JOY_Y_PIN
-    #define JOY_Y_PIN        33  //<---------------------  Крестовина Y
+    #define JOY_Y_PIN        33  //<---------------------  Стик Y
   #endif
   #ifndef JOY_BTN_PIN
-    #define JOY_BTN_PIN      25  //<---------------------  Крестовина кнопка
+    #define JOY_BTN_PIN      25  //<---------------------  Стик кнопка
   #endif
 
   #ifndef BTN_A_PIN
