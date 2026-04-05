@@ -25,7 +25,7 @@
 // ===== РУКА =====
 // Рука: "left" или "right" на каждый контроллер отдельно. Можно поставить unknown тогда надо будет указать в приложении
 
-#define HAND               "left"
+#define HAND               "right"
 
 // ===== ПИНЫ ДАТЧИКОВ =====
 // Если нужны кастомные пины — задайте их здесь, они перезапишут дефолты ниже.
@@ -36,19 +36,19 @@
 #if defined(BOARD_ESP32) //<---------------------  Тебе нужны вот эти
   // ESP32 classic: ADC1 каналы на GPIO 32-39
   #ifndef FLEX_THUMB_PIN
-    #define FLEX_THUMB_PIN   36  //<---------------------  Большой палец
+    #define FLEX_THUMB_PIN   34  //<---------------------  Большой палец
   #endif
   #ifndef FLEX_INDEX_PIN
-    #define FLEX_INDEX_PIN   39  //<---------------------  Указательный палец
+    #define FLEX_INDEX_PIN   26  //<---------------------  Указательный палец
   #endif
   #ifndef FLEX_MIDDLE_PIN
-    #define FLEX_MIDDLE_PIN  34  //<---------------------  Средний палец
+    #define FLEX_MIDDLE_PIN  27  //<---------------------  Средний палец
   #endif
   #ifndef FLEX_RING_PIN
-    #define FLEX_RING_PIN    35  //<---------------------  Безымянный палец
+    #define FLEX_RING_PIN    14  //<---------------------  Безымянный палец
   #endif
   #ifndef FLEX_PINKY_PIN
-    #define FLEX_PINKY_PIN   37  //<---------------------  Мизинец
+    #define FLEX_PINKY_PIN   12  //<---------------------  Мизинец
   #endif
 
   #ifndef JOY_X_PIN
@@ -62,13 +62,13 @@
   #endif
 
   #ifndef BTN_A_PIN
-    #define BTN_A_PIN        27  //<---------------------  Кнопка A
+    #define BTN_A_PIN        20  //<---------------------  Кнопка A
   #endif
   #ifndef BTN_B_PIN
-    #define BTN_B_PIN        14  //<---------------------  Кнопка B
+    #define BTN_B_PIN        18  //<---------------------  Кнопка B
   #endif
   #ifndef TRIGGER_PIN
-    #define TRIGGER_PIN      12  //<---------------------  Курок
+    #define TRIGGER_PIN      19  //<---------------------  Курок
   #endif
 
 #elif defined(BOARD_ESP32_S3)
