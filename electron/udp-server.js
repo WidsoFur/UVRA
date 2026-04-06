@@ -228,6 +228,7 @@ class UDPServer extends EventEmitter {
       menu: !!buttons.menu,
       calibrate: !!buttons.calibrate,
       triggerValue: json.triggerValue || 0,
+      raw: json.raw || null,
       mac: json.mac || null,
       source: rinfo.address,
     };

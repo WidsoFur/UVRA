@@ -256,10 +256,213 @@ function getDriverSettings() {
   });
 }
 
+/**
+ * Path to the OpenGloves default.vrsettings file.
+ */
+function getVRSettingsPath() {
+  const candidates = [
+    path.join(__dirname, '..', 'opengloves', 'resources', 'settings', 'default.vrsettings'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Read pose offsets from default.vrsettings.
+ * Returns { left: { pos: {x,y,z}, rot: {x,y,z} }, right: { pos: {x,y,z}, rot: {x,y,z} } }
+ */
+function readPoseOffsets() {
+  const settingsPath = getVRSettingsPath();
+  if (!settingsPath) return null;
+
+  try {
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const settings = JSON.parse(raw);
+    const ps = settings.pose_settings || {};
+
+    return {
+      left: {
+        pos: {
+          x: ps.left_x_offset_position ?? 0,
+          y: ps.left_y_offset_position ?? 0,
+          z: ps.left_z_offset_position ?? 0,
+        },
+        rot: {
+          x: ps.left_x_offset_degrees ?? 0,
+          y: ps.left_y_offset_degrees ?? 0,
+          z: ps.left_z_offset_degrees ?? 0,
+        },
+      },
+      right: {
+        pos: {
+          x: ps.right_x_offset_position ?? 0,
+          y: ps.right_y_offset_position ?? 0,
+          z: ps.right_z_offset_position ?? 0,
+        },
+        rot: {
+          x: ps.right_x_offset_degrees ?? 0,
+          y: ps.right_y_offset_degrees ?? 0,
+          z: ps.right_z_offset_degrees ?? 0,
+        },
+      },
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Write pose offsets to default.vrsettings and optionally push to running driver.
+ * @param {{ left: { pos: {x,y,z}, rot: {x,y,z} }, right: { pos: {x,y,z}, rot: {x,y,z} } }} offsets
+ */
+async function writePoseOffsets(offsets) {
+  const settingsPath = getVRSettingsPath();
+  if (!settingsPath) return { success: false, error: 'vrsettings not found' };
+
+  try {
+    // Read, update, write back
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const settings = JSON.parse(raw);
+    if (!settings.pose_settings) settings.pose_settings = {};
+    const ps = settings.pose_settings;
+
+    ps.left_x_offset_position = offsets.left.pos.x;
+    ps.left_y_offset_position = offsets.left.pos.y;
+    ps.left_z_offset_position = offsets.left.pos.z;
+    ps.left_x_offset_degrees = offsets.left.rot.x;
+    ps.left_y_offset_degrees = offsets.left.rot.y;
+    ps.left_z_offset_degrees = offsets.left.rot.z;
+
+    ps.right_x_offset_position = offsets.right.pos.x;
+    ps.right_y_offset_position = offsets.right.pos.y;
+    ps.right_z_offset_position = offsets.right.pos.z;
+    ps.right_x_offset_degrees = offsets.right.rot.x;
+    ps.right_y_offset_degrees = offsets.right.rot.y;
+    ps.right_z_offset_degrees = offsets.right.rot.z;
+
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+
+    // Also push to running driver via external server (port 52060)
+    const driverResult = await pushPoseOffsetsToDriver(offsets);
+
+    return { success: true, fileSaved: true, driverUpdated: driverResult.success };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+/**
+ * Push pose offsets to the running OpenGloves driver via the external server POST /settings.
+ */
+function pushPoseOffsetsToDriver(offsets) {
+  return new Promise((resolve) => {
+    const settings = {
+      pose_settings: {
+        left_x_offset_position: offsets.left.pos.x,
+        left_y_offset_position: offsets.left.pos.y,
+        left_z_offset_position: offsets.left.pos.z,
+        left_x_offset_degrees: offsets.left.rot.x,
+        left_y_offset_degrees: offsets.left.rot.y,
+        left_z_offset_degrees: offsets.left.rot.z,
+        right_x_offset_position: offsets.right.pos.x,
+        right_y_offset_position: offsets.right.pos.y,
+        right_z_offset_position: offsets.right.pos.z,
+        right_x_offset_degrees: offsets.right.rot.x,
+        right_y_offset_degrees: offsets.right.rot.y,
+        right_z_offset_degrees: offsets.right.rot.z,
+      }
+    };
+    const postData = JSON.stringify(settings);
+
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: 52060,
+      path: '/settings',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      },
+      timeout: 2000,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve({ success: res.statusCode === 200 }));
+    });
+    req.on('error', () => resolve({ success: false }));
+    req.on('timeout', () => { req.destroy(); resolve({ success: false }); });
+    req.write(postData);
+    req.end();
+  });
+}
+
+/**
+ * Path to the pose presets JSON file (stored alongside default.vrsettings).
+ */
+function getPresetsPath() {
+  const settingsDir = getVRSettingsPath();
+  if (!settingsDir) return null;
+  return path.join(path.dirname(settingsDir), 'pose_presets.json');
+}
+
+/**
+ * Load all pose presets.
+ * Returns { presets: { [name]: { left: {pos,rot}, right: {pos,rot} } } }
+ */
+function loadPosePresets() {
+  const presetsPath = getPresetsPath();
+  if (!presetsPath) return {};
+  try {
+    if (!fs.existsSync(presetsPath)) return {};
+    return JSON.parse(fs.readFileSync(presetsPath, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * Save a named preset.
+ */
+function savePosePreset(name, offsets) {
+  const presetsPath = getPresetsPath();
+  if (!presetsPath) return false;
+  try {
+    const presets = loadPosePresets();
+    presets[name] = offsets;
+    fs.writeFileSync(presetsPath, JSON.stringify(presets, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Delete a named preset.
+ */
+function deletePosePreset(name) {
+  const presetsPath = getPresetsPath();
+  if (!presetsPath) return false;
+  try {
+    const presets = loadPosePresets();
+    delete presets[name];
+    fs.writeFileSync(presetsPath, JSON.stringify(presets, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 module.exports = {
   discoverDevicesFromLog,
   getSteamVRLogPath,
   postTrackingReference,
   setControllerOverride,
   getDriverSettings,
+  readPoseOffsets,
+  writePoseOffsets,
+  loadPosePresets,
+  savePosePreset,
+  deletePosePreset,
 };

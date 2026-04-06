@@ -6,7 +6,22 @@ contextBridge.exposeInMainWorld('uvra', {
   connectPipe: (hand) => ipcRenderer.invoke('connect-pipe', hand),
   disconnectPipe: (hand) => ipcRenderer.invoke('disconnect-pipe', hand),
   getStatus: () => ipcRenderer.invoke('get-status'),
-  calibrate: (hand) => ipcRenderer.invoke('calibrate', hand),
+  calibrate: (hand, duration) => ipcRenderer.invoke('calibrate', { hand, duration }),
+  calibrateCancel: (hand) => ipcRenderer.invoke('calibrate-cancel', hand),
+  calibrationGet: (hand) => ipcRenderer.invoke('calibration-get', hand),
+  calibrationSet: (hand, calibration) => ipcRenderer.invoke('calibration-set', { hand, calibration }),
+  smoothingSet: (hand, alpha) => ipcRenderer.invoke('smoothing-set', { hand, alpha }),
+  deadzoneSet: (hand, deadzone) => ipcRenderer.invoke('deadzone-set', { hand, deadzone }),
+  onCalibrationStart: (callback) => {
+    const listener = (_, info) => callback(info);
+    ipcRenderer.on('calibration-start', listener);
+    return () => ipcRenderer.removeListener('calibration-start', listener);
+  },
+  onCalibrationEnd: (callback) => {
+    const listener = (_, info) => callback(info);
+    ipcRenderer.on('calibration-end', listener);
+    return () => ipcRenderer.removeListener('calibration-end', listener);
+  },
 
   // Device management (MAC-based)
   deviceGetAll: () => ipcRenderer.invoke('device-get-all'),
@@ -64,6 +79,15 @@ contextBridge.exposeInMainWorld('uvra', {
   // Tracking reference
   trackingGetDevices: () => ipcRenderer.invoke('tracking-get-devices'),
   trackingBind: (hand, deviceId) => ipcRenderer.invoke('tracking-bind', { hand, deviceId }),
+
+  // Pose offsets
+  poseOffsetsGet: () => ipcRenderer.invoke('pose-offsets-get'),
+  poseOffsetsSet: (offsets) => ipcRenderer.invoke('pose-offsets-set', offsets),
+
+  // Pose presets
+  posePresetsList: () => ipcRenderer.invoke('pose-presets-list'),
+  posePresetsSave: (name, offsets) => ipcRenderer.invoke('pose-presets-save', { name, offsets }),
+  posePresetsDelete: (name) => ipcRenderer.invoke('pose-presets-delete', { name }),
 
   // Dev emulator
   devEmulatorSend: (data) => ipcRenderer.invoke('dev-emulator-send', data),

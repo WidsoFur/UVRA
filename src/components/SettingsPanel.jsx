@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Wifi, Save, Server, Cpu, Trash2, Code, Crosshair, RefreshCw } from 'lucide-react';
+import { Wifi, Save, Server, Cpu, Trash2, Code, Crosshair, RefreshCw, Move3d, Bookmark } from 'lucide-react';
 import DevEmulator from './DevEmulator';
 
 function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer, onStopServer, onLog }) {
@@ -12,6 +12,12 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
   const [bindingStatus, setBindingStatus] = useState({});
   const [driverRunning, setDriverRunning] = useState(false);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [poseOffsets, setPoseOffsets] = useState(null);
+  const [savingOffsets, setSavingOffsets] = useState(false);
+  const [offsetSaveStatus, setOffsetSaveStatus] = useState(null);
+  const [presets, setPresets] = useState({});
+  const [selectedPreset, setSelectedPreset] = useState('');
+  const [presetName, setPresetName] = useState('');
 
   // Load saved devices on mount
   useEffect(() => {
@@ -86,6 +92,81 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
   useEffect(() => {
     loadSteamVRDevices();
   }, [loadSteamVRDevices]);
+
+  // Load pose offsets and presets on mount
+  useEffect(() => {
+    if (!window.uvra) return;
+    window.uvra.poseOffsetsGet().then((result) => {
+      if (result.success) setPoseOffsets(result.offsets);
+    });
+    window.uvra.posePresetsList().then((result) => {
+      if (result.success) setPresets(result.presets || {});
+    });
+  }, []);
+
+  const handleSelectPreset = (name) => {
+    setSelectedPreset(name);
+    if (name && presets[name]) {
+      setPoseOffsets(JSON.parse(JSON.stringify(presets[name])));
+      setPresetName(name);
+    }
+  };
+
+  const handleSavePreset = async () => {
+    if (!window.uvra || !poseOffsets || !presetName.trim()) return;
+    const result = await window.uvra.posePresetsSave(presetName.trim(), poseOffsets);
+    if (result.success) {
+      setPresets(result.presets || {});
+      setSelectedPreset(presetName.trim());
+      onLog?.('success', `Пресет "${presetName.trim()}" сохранён`);
+    }
+  };
+
+  const handleDeletePreset = async () => {
+    if (!window.uvra || !selectedPreset) return;
+    const result = await window.uvra.posePresetsDelete(selectedPreset);
+    if (result.success) {
+      setPresets(result.presets || {});
+      setSelectedPreset('');
+      setPresetName('');
+      onLog?.('info', `Пресет "${selectedPreset}" удалён`);
+    }
+  };
+
+  const updateOffset = (hand, group, axis, value) => {
+    const num = parseFloat(value);
+    if (isNaN(num)) return;
+    setPoseOffsets(prev => ({
+      ...prev,
+      [hand]: {
+        ...prev[hand],
+        [group]: {
+          ...prev[hand][group],
+          [axis]: num,
+        },
+      },
+    }));
+  };
+
+  const handleSaveOffsets = async () => {
+    if (!window.uvra || !poseOffsets) return;
+    setSavingOffsets(true);
+    setOffsetSaveStatus(null);
+    try {
+      const result = await window.uvra.poseOffsetsSet(poseOffsets);
+      if (result.success) {
+        setOffsetSaveStatus({ type: 'success', driverUpdated: result.driverUpdated });
+        onLog?.('success', `Оффсеты сохранены${result.driverUpdated ? ' и применены к драйверу' : ' (драйвер не запущен)'}`);
+      } else {
+        setOffsetSaveStatus({ type: 'error', message: result.error });
+        onLog?.('error', `Ошибка сохранения оффсетов: ${result.error}`);
+      }
+    } catch (err) {
+      setOffsetSaveStatus({ type: 'error', message: err.message });
+    }
+    setSavingOffsets(false);
+    setTimeout(() => setOffsetSaveStatus(null), 3000);
+  };
 
   const handleTrackingBind = async (hand) => {
     if (!window.uvra) return;
@@ -315,6 +396,134 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        {/* Pose Offsets */}
+        <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Move3d size={16} className="text-uvra-accent" />
+              <h2 className="text-sm font-semibold text-uvra-text">Оффсеты позиции</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              {offsetSaveStatus && (
+                <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                  offsetSaveStatus.type === 'success'
+                    ? 'bg-uvra-success/20 text-uvra-success'
+                    : 'bg-uvra-danger/20 text-uvra-danger'
+                }`}>
+                  {offsetSaveStatus.type === 'success'
+                    ? (offsetSaveStatus.driverUpdated ? 'Применено' : 'Сохранено (перезапустите SteamVR)')
+                    : 'Ошибка'}
+                </span>
+              )}
+              <button
+                onClick={handleSaveOffsets}
+                disabled={!poseOffsets || savingOffsets}
+                className="px-3 py-1.5 bg-uvra-accent/20 text-uvra-accent-light rounded-lg text-xs font-medium hover:bg-uvra-accent/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <Save size={12} className="inline mr-1" />
+                {savingOffsets ? 'Сохранение...' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+
+          {/* Preset selector */}
+          <div className="mb-4 p-3 bg-uvra-bg rounded-lg space-y-2">
+            <div className="flex items-center gap-2 mb-1">
+              <Bookmark size={12} className="text-uvra-accent" />
+              <span className="text-[10px] text-uvra-text-dim font-medium">Пресеты</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedPreset}
+                onChange={(e) => handleSelectPreset(e.target.value)}
+                className="flex-1 bg-uvra-card border border-uvra-border rounded-lg px-2.5 py-1.5 text-xs text-uvra-text focus:border-uvra-accent focus:outline-none transition-colors appearance-none cursor-pointer"
+              >
+                <option value="">-- Выбрать пресет --</option>
+                {Object.keys(presets).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleDeletePreset}
+                disabled={!selectedPreset}
+                className="p-1.5 rounded-lg text-uvra-text-dim hover:text-uvra-danger hover:bg-uvra-danger/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Удалить пресет"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                placeholder="Название пресета..."
+                className="flex-1 bg-uvra-card border border-uvra-border rounded-lg px-2.5 py-1.5 text-xs text-uvra-text focus:border-uvra-accent focus:outline-none transition-colors"
+              />
+              <button
+                onClick={handleSavePreset}
+                disabled={!poseOffsets || !presetName.trim()}
+                className="px-3 py-1.5 bg-uvra-accent/20 text-uvra-accent-light rounded-lg text-[10px] font-medium hover:bg-uvra-accent/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                <Bookmark size={11} className="inline mr-1" />
+                Сохранить пресет
+              </button>
+            </div>
+          </div>
+
+          {!poseOffsets ? (
+            <div className="text-xs text-uvra-text-dim p-3 bg-uvra-bg rounded-lg">
+              Файл настроек не найден. Убедитесь что драйвер установлен.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {['left', 'right'].map((hand) => (
+                <div key={hand}>
+                  <div className="text-xs text-uvra-text-dim mb-2 font-medium">
+                    {hand === 'left' ? 'Левая рука' : 'Правая рука'}
+                  </div>
+                  <div className="space-y-2">
+                    <div>
+                      <div className="text-[10px] text-uvra-text-dim mb-1">Позиция (м)</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['x', 'y', 'z'].map((axis) => (
+                          <div key={axis}>
+                            <label className="text-[10px] text-uvra-text-dim uppercase">{axis}</label>
+                            <input
+                              type="number"
+                              step="0.001"
+                              value={poseOffsets[hand].pos[axis]}
+                              onChange={(e) => updateOffset(hand, 'pos', axis, e.target.value)}
+                              className="w-full bg-uvra-bg border border-uvra-border rounded px-2 py-1.5 text-xs text-uvra-text font-mono focus:border-uvra-accent focus:outline-none transition-colors"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-uvra-text-dim mb-1">Вращение (°)</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['x', 'y', 'z'].map((axis) => (
+                          <div key={axis}>
+                            <label className="text-[10px] text-uvra-text-dim uppercase">{axis}</label>
+                            <input
+                              type="number"
+                              step="1"
+                              value={poseOffsets[hand].rot[axis]}
+                              onChange={(e) => updateOffset(hand, 'rot', axis, e.target.value)}
+                              className="w-full bg-uvra-bg border border-uvra-border rounded px-2 py-1.5 text-xs text-uvra-text font-mono focus:border-uvra-accent focus:outline-none transition-colors"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

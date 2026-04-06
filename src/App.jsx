@@ -144,12 +144,36 @@ function App() {
     }
   };
 
-  const handleCalibrate = async (hand) => {
-    if (window.uvra) {
-      await window.uvra.calibrate(hand);
-    }
-    addLog('info', `Калибровка ${hand === 'left' ? 'левой' : 'правой'} перчатки`);
+  const [calibrating, setCalibrating] = useState({ left: false, right: false });
+  const [calibrationModal, setCalibrationModal] = useState(null); // null or 'left'/'right'
+
+  const handleCalibrate = (hand) => {
+    setCalibrationModal(hand);
   };
+
+  const confirmCalibration = async () => {
+    const hand = calibrationModal;
+    setCalibrationModal(null);
+    if (window.uvra && hand) {
+      setCalibrating(prev => ({ ...prev, [hand]: true }));
+      await window.uvra.calibrate(hand, 10000);
+      addLog('info', `Калибровка ${hand === 'left' ? 'левой' : 'правой'} — сжимайте и разжимайте руку (10 сек)...`);
+    }
+  };
+
+  const cancelCalibration = () => {
+    setCalibrationModal(null);
+  };
+
+  useEffect(() => {
+    if (!window.uvra) return;
+    const unsubs = [];
+    unsubs.push(window.uvra.onCalibrationEnd((info) => {
+      setCalibrating(prev => ({ ...prev, [info.hand]: false }));
+      addLog('success', `Калибровка ${info.hand === 'left' ? 'левой' : 'правой'} завершена`);
+    }));
+    return () => unsubs.forEach(fn => fn && fn());
+  }, [addLog]);
 
   return (
     <div className="h-screen flex flex-col bg-uvra-bg overflow-hidden">
@@ -168,6 +192,7 @@ function App() {
                   connected={leftConnected}
                   pipeConnected={leftPipeConnected}
                   fps={fps.left}
+                  calibrating={calibrating.left}
                   onConnectPipe={() => handleConnectPipe('left')}
                   onCalibrate={() => handleCalibrate('left')}
                 />
@@ -177,6 +202,7 @@ function App() {
                   connected={rightConnected}
                   pipeConnected={rightPipeConnected}
                   fps={fps.right}
+                  calibrating={calibrating.right}
                   onConnectPipe={() => handleConnectPipe('right')}
                   onCalibrate={() => handleCalibrate('right')}
                 />
@@ -212,6 +238,59 @@ function App() {
         onStartServer={handleStartServer}
         onStopServer={handleStopServer}
       />
+
+      {/* Calibration confirmation modal */}
+      {calibrationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-uvra-card border border-uvra-border rounded-2xl shadow-2xl w-[420px] p-6 mx-4">
+            <h3 className="text-base font-semibold text-uvra-text mb-1">
+              Калибровка — {calibrationModal === 'left' ? 'левая' : 'правая'} рука
+            </h3>
+            <p className="text-xs text-uvra-text-dim mb-4">
+              Процесс займёт 10 секунд. Следуйте инструкции:
+            </p>
+
+            <div className="space-y-2.5 mb-5">
+              <div className="flex items-start gap-3 p-2.5 bg-uvra-bg rounded-lg">
+                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-uvra-accent/20 text-uvra-accent flex items-center justify-center font-bold text-[10px]">1</span>
+                <div>
+                  <div className="text-xs font-medium text-uvra-text">Начальная позиция</div>
+                  <div className="text-[11px] text-uvra-text-dim">Полностью раскройте ладонь, выпрямите все пальцы</div>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-2.5 bg-uvra-bg rounded-lg">
+                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-uvra-accent/20 text-uvra-accent flex items-center justify-center font-bold text-[10px]">2</span>
+                <div>
+                  <div className="text-xs font-medium text-uvra-text">Движение</div>
+                  <div className="text-[11px] text-uvra-text-dim">Медленно сожмите кулак до упора, затем снова раскройте. Повторите 3–4 раза</div>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-2.5 bg-uvra-bg rounded-lg">
+                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-uvra-accent/20 text-uvra-accent flex items-center justify-center font-bold text-[10px]">3</span>
+                <div>
+                  <div className="text-xs font-medium text-uvra-text">Каждый палец</div>
+                  <div className="text-[11px] text-uvra-text-dim">Постарайтесь также согнуть каждый палец по отдельности, особенно большой</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={cancelCalibration}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-uvra-border/50 text-uvra-text-dim hover:bg-uvra-border transition-colors"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={confirmCalibration}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-uvra-accent/20 text-uvra-accent-light hover:bg-uvra-accent/30 transition-colors"
+              >
+                Начать калибровку
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

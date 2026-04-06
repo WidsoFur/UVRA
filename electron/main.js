@@ -4,7 +4,8 @@ const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
 const DeviceStore = require('./device-store');
-const { discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings } = require('./steamvr-devices');
+const { discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, readPoseOffsets, writePoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
+const { appLogger, rawLogger } = require('./logger');
 
 let mainWindow;
 let udpServer;
@@ -65,11 +66,31 @@ function initServices() {
   // Handle pipe errors gracefully to prevent unhandled exceptions
   leftPipe.on('error', (err) => {
     console.error('[NamedPipe] Left pipe error:', err.error || err);
+    appLogger.error('Left pipe error', { error: err.error || err });
     safeSend('pipe-error', { hand: 'left', error: err.error || err });
   });
   rightPipe.on('error', (err) => {
     console.error('[NamedPipe] Right pipe error:', err.error || err);
+    appLogger.error('Right pipe error', { error: err.error || err });
     safeSend('pipe-error', { hand: 'right', error: err.error || err });
+  });
+
+  // Forward calibration events to renderer
+  leftPipe.on('calibrationStart', (info) => {
+    appLogger.event('Calibration started', info);
+    safeSend('calibration-start', info);
+  });
+  leftPipe.on('calibrationEnd', (info) => {
+    appLogger.event('Calibration ended', info);
+    safeSend('calibration-end', info);
+  });
+  rightPipe.on('calibrationStart', (info) => {
+    appLogger.event('Calibration started', info);
+    safeSend('calibration-start', info);
+  });
+  rightPipe.on('calibrationEnd', (info) => {
+    appLogger.event('Calibration ended', info);
+    safeSend('calibration-end', info);
   });
 
   udpServer = new UDPServer();
@@ -78,10 +99,13 @@ function initServices() {
 
   // Forward driver manager events to renderer
   driverManager.on('log', (type, message) => {
+    if (type === 'error') appLogger.error(`Driver: ${message}`);
+    else appLogger.info(`Driver: ${message}`);
     safeSend('driver-log', { type, message });
   });
 
   driverManager.on('status', (status) => {
+    appLogger.event('Driver status changed', status);
     safeSend('driver-status', status);
   });
 
@@ -95,6 +119,7 @@ function initServices() {
 
   // When a device is discovered via broadcast, notify the renderer
   udpServer.on('deviceDiscovered', (info) => {
+    appLogger.event('Device discovered', { mac: info.mac, address: info.address });
     const storedDevice = deviceStore.getDevice(info.mac);
     safeSend('device-discovered', {
       mac: info.mac,
@@ -105,6 +130,9 @@ function initServices() {
   });
 
   udpServer.on('gloveData', (data) => {
+    // Log raw sensor data
+    rawLogger.logPacket(data.hand, data);
+
     // If device has a MAC and a stored hand assignment, override the hand from firmware
     if (data.mac) {
       const storedHand = deviceStore.getHand(data.mac);
@@ -121,6 +149,7 @@ function initServices() {
   });
 
   udpServer.on('gloveConnected', (info) => {
+    appLogger.event('Glove connected', { mac: info.mac, hand: info.hand, address: info.address });
     // If MAC is known, override hand from store
     if (info.mac) {
       const storedHand = deviceStore.getHand(info.mac);
@@ -132,10 +161,12 @@ function initServices() {
   });
 
   udpServer.on('gloveDisconnected', (info) => {
+    appLogger.event('Glove disconnected', { hand: info.hand, address: info.address });
     safeSend('glove-disconnected', info);
   });
 
   udpServer.on('error', (err) => {
+    appLogger.error('UDP server error', { error: err.message });
     safeSend('server-error', err.message);
   });
 }
@@ -144,8 +175,10 @@ function setupIPC() {
   ipcMain.handle('start-server', async (_, port) => {
     try {
       await udpServer.start(port || 7777);
+      appLogger.info('UDP server started', { port: udpServer.port });
       return { success: true, port: udpServer.port };
     } catch (err) {
+      appLogger.error('UDP server start failed', { error: err.message });
       return { success: false, error: err.message };
     }
   });
@@ -155,8 +188,10 @@ function setupIPC() {
       udpServer.stop();
       leftPipe.disconnect();
       rightPipe.disconnect();
+      appLogger.info('UDP server stopped, pipes disconnected');
       return { success: true };
     } catch (err) {
+      appLogger.error('Stop server failed', { error: err.message });
       return { success: false, error: err.message };
     }
   });
@@ -165,8 +200,10 @@ function setupIPC() {
     try {
       const pipe = hand === 'left' ? leftPipe : rightPipe;
       await pipe.connect();
+      appLogger.info(`Pipe connected: ${hand}`);
       return { success: true, hand };
     } catch (err) {
+      appLogger.error(`Pipe connect failed: ${hand}`, { error: err.message });
       return { success: false, error: err.message, hand };
     }
   });
@@ -175,8 +212,10 @@ function setupIPC() {
     try {
       const pipe = hand === 'left' ? leftPipe : rightPipe;
       pipe.disconnect();
+      appLogger.info(`Pipe disconnected: ${hand}`);
       return { success: true, hand };
     } catch (err) {
+      appLogger.error(`Pipe disconnect failed: ${hand}`, { error: err.message });
       return { success: false, error: err.message, hand };
     }
   });
@@ -191,11 +230,46 @@ function setupIPC() {
     };
   });
 
-  ipcMain.handle('calibrate', async (_, hand) => {
+  ipcMain.handle('calibrate', async (_, { hand, duration }) => {
     const pipe = hand === 'left' ? leftPipe : rightPipe;
-    if (pipe) {
-      pipe.calibrate();
-    }
+    if (!pipe) return { success: false, error: 'pipe not found' };
+    appLogger.event(`Calibration requested: ${hand}`, { duration: duration || 10000 });
+    pipe.startCalibration(duration || 10000);
+    return { success: true };
+  });
+
+  ipcMain.handle('calibrate-cancel', async (_, hand) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (pipe) pipe.cancelCalibration();
+    return { success: true };
+  });
+
+  ipcMain.handle('calibration-get', (_, hand) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    return { success: true, calibration: pipe.getCalibration(), calibrating: pipe.calibrating };
+  });
+
+  ipcMain.handle('calibration-set', (_, { hand, calibration }) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    pipe.setCalibration(calibration);
+    return { success: true };
+  });
+
+  ipcMain.handle('smoothing-set', (_, { hand, alpha }) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    pipe.setSmoothingAlpha(alpha);
+    pipe._saveCalibration();
+    return { success: true };
+  });
+
+  ipcMain.handle('deadzone-set', (_, { hand, deadzone }) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    pipe.setDeadzone(deadzone);
+    pipe._saveCalibration();
     return { success: true };
   });
 
@@ -361,6 +435,41 @@ function setupIPC() {
     }
   });
 
+  // Pose offset management
+  ipcMain.handle('pose-offsets-get', async () => {
+    try {
+      const offsets = readPoseOffsets();
+      if (!offsets) return { success: false, error: 'vrsettings not found' };
+      return { success: true, offsets };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('pose-offsets-set', async (_, offsets) => {
+    try {
+      const result = await writePoseOffsets(offsets);
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Pose presets
+  ipcMain.handle('pose-presets-list', () => {
+    return { success: true, presets: loadPosePresets() };
+  });
+
+  ipcMain.handle('pose-presets-save', (_, { name, offsets }) => {
+    const ok = savePosePreset(name, offsets);
+    return { success: ok, presets: ok ? loadPosePresets() : null };
+  });
+
+  ipcMain.handle('pose-presets-delete', (_, { name }) => {
+    const ok = deletePosePreset(name);
+    return { success: ok, presets: ok ? loadPosePresets() : null };
+  });
+
   ipcMain.on('window-minimize', () => mainWindow?.minimize());
   ipcMain.on('window-maximize', () => {
     if (mainWindow?.isMaximized()) {
@@ -395,12 +504,17 @@ function gracefulShutdown() {
   try { if (leftPipe) leftPipe.disconnect(); } catch (e) {}
   try { if (rightPipe) rightPipe.disconnect(); } catch (e) {}
 
-  // 5. Destroy window and quit
+  // 5. Close loggers
+  appLogger.info('Graceful shutdown complete');
+  appLogger.close();
+  rawLogger.close();
+
+  // 6. Destroy window and quit
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.destroy();
   }
 
-  // 6. Force quit after short delay as safety net
+  // 7. Force quit after short delay as safety net
   setTimeout(() => {
     app.exit(0);
   }, 500);
@@ -409,6 +523,7 @@ function gracefulShutdown() {
 }
 
 app.whenReady().then(() => {
+  appLogger.info('App ready, creating window and initializing services');
   createWindow();
   initServices();
   setupIPC();
@@ -416,6 +531,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  appLogger.info('App before-quit signal received');
 });
 
 app.on('window-all-closed', () => {

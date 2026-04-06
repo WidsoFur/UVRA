@@ -1,5 +1,5 @@
-import React from 'react';
-import { Wifi, WifiOff, Link, LinkIcon, RotateCcw, Activity } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Wifi, WifiOff, Link, LinkIcon, RotateCcw, Activity, Sliders } from 'lucide-react';
 import FingerVisualizer from './FingerVisualizer';
 import JoystickVisualizer from './JoystickVisualizer';
 import ButtonIndicator from './ButtonIndicator';
@@ -7,9 +7,35 @@ import ButtonIndicator from './ButtonIndicator';
 const FINGER_NAMES = ['Большой', 'Указательный', 'Средний', 'Безымянный', 'Мизинец'];
 const FINGER_NAMES_SHORT = ['Б', 'У', 'С', 'Б', 'М'];
 
-function GlovePanel({ hand, data, connected, pipeConnected, fps, onConnectPipe, onCalibrate }) {
+function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, onConnectPipe, onCalibrate }) {
   const isLeft = hand === 'left';
   const title = isLeft ? 'Левая перчатка' : 'Правая перчатка';
+  const [showSettings, setShowSettings] = useState(false);
+  const [smoothing, setSmoothing] = useState(0.4);
+  const [deadzone, setDeadzone] = useState(0.03);
+
+  // Load calibration settings on mount
+  useEffect(() => {
+    if (!window.uvra) return;
+    window.uvra.calibrationGet(hand).then((result) => {
+      if (result.success) {
+        setSmoothing(result.calibration.smoothingAlpha);
+        setDeadzone(result.calibration.deadzone);
+      }
+    });
+  }, [hand]);
+
+  const handleSmoothingChange = (val) => {
+    const alpha = parseFloat(val);
+    setSmoothing(alpha);
+    if (window.uvra) window.uvra.smoothingSet(hand, alpha);
+  };
+
+  const handleDeadzoneChange = (val) => {
+    const dz = parseFloat(val);
+    setDeadzone(dz);
+    if (window.uvra) window.uvra.deadzoneSet(hand, dz);
+  };
 
   const avgCurl = data.flexion
     ? data.flexion.reduce((sum, f) => sum + f.reduce((s, v) => s + v, 0) / f.length, 0) / 5
@@ -50,18 +76,27 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, onConnectPipe, 
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowSettings(s => !s)}
+            className={`p-1.5 rounded-lg text-uvra-text-dim hover:text-uvra-accent hover:bg-uvra-accent/10 transition-colors ${showSettings ? 'bg-uvra-accent/10 text-uvra-accent' : ''}`}
+            title="Настройки сглаживания"
+          >
+            <Sliders size={13} />
+          </button>
+          <button
             onClick={onCalibrate}
-            disabled={!connected}
+            disabled={!connected || calibrating}
             className={`
               px-3 py-1.5 rounded-lg text-xs font-medium transition-all
-              ${connected
-                ? 'bg-uvra-border hover:bg-uvra-accent/20 text-uvra-text'
-                : 'bg-uvra-border/50 text-uvra-text-dim cursor-not-allowed'
+              ${calibrating
+                ? 'bg-uvra-warning/20 text-uvra-warning animate-pulse'
+                : connected
+                  ? 'bg-uvra-border hover:bg-uvra-accent/20 text-uvra-text'
+                  : 'bg-uvra-border/50 text-uvra-text-dim cursor-not-allowed'
               }
             `}
           >
-            <RotateCcw size={12} className="inline mr-1" />
-            Калибровка
+            <RotateCcw size={12} className={`inline mr-1 ${calibrating ? 'animate-spin' : ''}`} />
+            {calibrating ? 'Калибровка...' : 'Калибровка'}
           </button>
           <button
             onClick={onConnectPipe}
@@ -81,6 +116,46 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, onConnectPipe, 
           </button>
         </div>
       </div>
+
+      {/* Settings panel (smoothing/deadzone) */}
+      {showSettings && connected && (
+        <div className="px-4 py-3 border-b border-uvra-border bg-uvra-bg/50 space-y-3 shrink-0">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-uvra-text-dim">Сглаживание (EMA)</span>
+              <span className="text-[10px] text-uvra-accent font-mono">{smoothing.toFixed(2)}</span>
+            </div>
+            <input
+              type="range"
+              min="0.05"
+              max="1.0"
+              step="0.05"
+              value={smoothing}
+              onChange={(e) => handleSmoothingChange(e.target.value)}
+              className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
+            />
+            <div className="flex justify-between text-[9px] text-uvra-text-dim mt-0.5">
+              <span>Плавно</span>
+              <span>Быстро</span>
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-uvra-text-dim">Мёртвая зона</span>
+              <span className="text-[10px] text-uvra-accent font-mono">{(deadzone * 100).toFixed(0)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="0.15"
+              step="0.01"
+              value={deadzone}
+              onChange={(e) => handleDeadzoneChange(e.target.value)}
+              className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 p-4 overflow-auto min-h-0">
