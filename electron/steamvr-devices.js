@@ -147,15 +147,41 @@ function discoverDevicesFromLog() {
  * Get SteamVR vrserver.txt log path
  */
 function getSteamVRLogPath() {
-  const candidates = [
+  const os = require('os');
+  const candidates = [];
+
+  // 1. Try to find Steam path via openvrpaths.vrpath (most reliable)
+  try {
+    const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
+    if (fs.existsSync(vrpathFile)) {
+      const text = fs.readFileSync(vrpathFile, 'utf8').replace(/^\uFEFF/, '');
+      const data = JSON.parse(text);
+      // runtime paths point to SteamVR, Steam logs are two levels up
+      if (data.runtime) {
+        for (const runtimePath of data.runtime) {
+          const normalized = runtimePath.replace(/\\\\/g, '\\').replace(/\//g, '\\');
+          // SteamVR is at Steam/steamapps/common/SteamVR, logs at Steam/logs/
+          const steamRoot = path.resolve(normalized, '..', '..', '..', '..');
+          candidates.push(path.join(steamRoot, 'logs', 'vrserver.txt'));
+        }
+      }
+      // log paths directly from openvrpaths
+      if (data.log) {
+        for (const logPath of data.log) {
+          const normalized = logPath.replace(/\\\\/g, '\\').replace(/\//g, '\\');
+          candidates.push(path.join(normalized, 'vrserver.txt'));
+        }
+      }
+    }
+  } catch (e) { /* continue */ }
+
+  // 2. Common hardcoded paths as fallback
+  candidates.push(
     path.join('C:', 'Program Files (x86)', 'Steam', 'logs', 'vrserver.txt'),
     path.join('D:', 'Program Files (x86)', 'Steam', 'logs', 'vrserver.txt'),
     path.join('D:', 'Steam', 'logs', 'vrserver.txt'),
-  ];
-
-  // Also try user-specific Steam paths
-  const home = require('os').homedir();
-  candidates.push(path.join(home, 'Steam', 'logs', 'vrserver.txt'));
+    path.join(os.homedir(), 'Steam', 'logs', 'vrserver.txt'),
+  );
 
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
