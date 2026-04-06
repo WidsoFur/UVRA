@@ -67,29 +67,47 @@ class NamedPipeClient extends EventEmitter {
     this._loadCalibration();
   }
 
-  connect() {
+  connect(retries = 5, delayMs = 2000) {
     return new Promise((resolve, reject) => {
       if (this.connected) {
         resolve();
         return;
       }
 
-      this.pipe = net.createConnection(this.pipeName, () => {
-        this.connected = true;
-        this.emit('connected', this.hand);
-        resolve();
-      });
+      const attempt = (attemptsLeft) => {
+        const pipe = net.createConnection(this.pipeName, () => {
+          this.pipe = pipe;
+          this.connected = true;
+          this.emit('connected', this.hand);
+          resolve();
+        });
 
-      this.pipe.on('error', (err) => {
-        this.connected = false;
-        this.emit('error', { hand: this.hand, error: err.message });
-        reject(err);
-      });
+        pipe.on('error', (err) => {
+          pipe.destroy();
+          const retriable = err.code === 'EPERM' || err.code === 'ENOENT' || err.code === 'EACCES';
+          if (retriable && attemptsLeft > 0) {
+            this.emit('error', { hand: this.hand, error: `${err.message} — повтор через ${delayMs / 1000}с (осталось ${attemptsLeft})` });
+            setTimeout(() => attempt(attemptsLeft - 1), delayMs);
+          } else {
+            this.connected = false;
+            let hint = '';
+            if (err.code === 'EPERM' || err.code === 'EACCES') {
+              hint = '. Попробуйте запустить UVRA от имени администратора, либо убедитесь что SteamVR и UVRA запущены с одинаковыми правами';
+            } else if (err.code === 'ENOENT') {
+              hint = '. Pipe не найден — убедитесь что SteamVR запущен и драйвер OpenGloves активен';
+            }
+            this.emit('error', { hand: this.hand, error: err.message + hint });
+            reject(err);
+          }
+        });
 
-      this.pipe.on('close', () => {
-        this.connected = false;
-        this.emit('disconnected', this.hand);
-      });
+        pipe.on('close', () => {
+          this.connected = false;
+          this.emit('disconnected', this.hand);
+        });
+      };
+
+      attempt(retries);
     });
   }
 

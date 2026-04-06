@@ -94,6 +94,12 @@ function App() {
       }
       if (status.leftPipeConnected) setLeftPipeConnected(true);
       if (status.rightPipeConnected) setRightPipeConnected(true);
+      if (status.connectedGloves) {
+        for (const g of status.connectedGloves) {
+          if (g.hand === 'left') setLeftConnected(true);
+          else if (g.hand === 'right') setRightConnected(true);
+        }
+      }
     });
 
     const fpsInterval = setInterval(() => {
