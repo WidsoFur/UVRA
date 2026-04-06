@@ -1,10 +1,11 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
 const DeviceStore = require('./device-store');
-const { discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, readPoseOffsets, writePoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
+const { discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
 const { appLogger, rawLogger } = require('./logger');
 
 let mainWindow;
@@ -417,14 +418,16 @@ function setupIPC() {
 
   ipcMain.handle('tracking-bind', async (_, { hand, deviceId }) => {
     try {
+      appLogger.info(`Tracking bind: hand=${hand}, deviceId=${deviceId}`);
       const role = hand === 'left' ? 1 : 2; // TrackedControllerRole_LeftHand=1, RightHand=2
 
-      // Approach 1: POST to internal server (port 52061) for immediate effect
+      // Approach 1: POST to internal server (port 52071) for immediate effect
       const postResult = await postTrackingReference(deviceId, role);
+      appLogger.info(`Tracking reference POST result: ${JSON.stringify(postResult)}`);
 
       // Approach 2: Set controller_override via external server (port 52060) as persistent fallback
-      // First get current settings to preserve the other hand's value
       const currentSettings = await getDriverSettings();
+      appLogger.info(`Current driver settings: ${JSON.stringify(currentSettings)}`);
       let leftId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_left || 0) : 0;
       let rightId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_right || 0) : 0;
 
@@ -432,9 +435,29 @@ function setupIPC() {
       else rightId = deviceId;
 
       const overrideResult = await setControllerOverride(leftId, rightId);
+      appLogger.info(`Controller override result: ${JSON.stringify(overrideResult)}`);
+
+      // Approach 3: Write to default.vrsettings file as persistent fallback
+      let fileSaved = false;
+      try {
+        const settingsPath = getVRSettingsPath();
+        if (settingsPath) {
+          const raw = fs.readFileSync(settingsPath, 'utf8');
+          const settings = JSON.parse(raw);
+          if (!settings.pose_settings) settings.pose_settings = {};
+          settings.pose_settings.controller_override = true;
+          settings.pose_settings.controller_override_left = leftId;
+          settings.pose_settings.controller_override_right = rightId;
+          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+          fileSaved = true;
+          appLogger.info(`Привязка сохранена в файл: left=${leftId}, right=${rightId}`);
+        }
+      } catch (fileErr) {
+        appLogger.error(`Ошибка записи привязки в файл: ${fileErr.message}`);
+      }
 
       return {
-        success: postResult.success || overrideResult.success,
+        success: postResult.success || overrideResult.success || fileSaved,
         hand,
         deviceId,
         methods: {
@@ -443,6 +466,7 @@ function setupIPC() {
         },
       };
     } catch (err) {
+      appLogger.error(`Tracking bind error: ${err.message}`);
       return { success: false, error: err.message };
     }
   });

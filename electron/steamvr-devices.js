@@ -506,6 +506,7 @@ function deletePosePreset(name) {
 module.exports = {
   discoverDevicesFromLog,
   getSteamVRLogPath,
+  getVRSettingsPath,
   postTrackingReference,
   setControllerOverride,
   getDriverSettings,
