@@ -118,8 +118,12 @@ function initServices() {
   driverManager.checkInstalled();
 
   // When a device is discovered via broadcast, notify the renderer
+  const _discoveredMacs = new Set();
   udpServer.on('deviceDiscovered', (info) => {
-    appLogger.event('Device discovered', { mac: info.mac, address: info.address });
+    if (!_discoveredMacs.has(info.mac)) {
+      _discoveredMacs.add(info.mac);
+      appLogger.event('Device discovered', { mac: info.mac, address: info.address });
+    }
     const storedDevice = deviceStore.getDevice(info.mac);
     safeSend('device-discovered', {
       mac: info.mac,
@@ -168,6 +172,14 @@ function initServices() {
   udpServer.on('error', (err) => {
     appLogger.error('UDP server error', { error: err.message });
     safeSend('server-error', err.message);
+  });
+
+  // Auto-start UDP server on launch
+  udpServer.start(7777).then(() => {
+    appLogger.info('UDP server auto-started on port 7777');
+    safeSend('server-auto-started', { port: 7777 });
+  }).catch((err) => {
+    appLogger.error('UDP server auto-start failed', { error: err.message });
   });
 }
 
@@ -484,6 +496,7 @@ function setupIPC() {
 function gracefulShutdown() {
   if (isQuitting) return;
   isQuitting = true;
+  appLogger.info('Graceful shutdown initiated');
 
   // 1. Stop dev emulator
   if (devEmulatorInterval) {
@@ -509,17 +522,18 @@ function gracefulShutdown() {
   appLogger.close();
   rawLogger.close();
 
-  // 6. Destroy window and quit
+  // 6. Destroy window
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.destroy();
+    mainWindow = null;
   }
 
-  // 7. Force quit after short delay as safety net
-  setTimeout(() => {
-    app.exit(0);
-  }, 500);
-
+  // 7. Force-kill the process after a short grace period
+  //    This guarantees no lingering Node handles keep the process alive
   app.quit();
+  setTimeout(() => {
+    process.exit(0);
+  }, 1000);
 }
 
 app.whenReady().then(() => {

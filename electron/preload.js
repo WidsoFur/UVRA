@@ -75,6 +75,11 @@ contextBridge.exposeInMainWorld('uvra', {
     ipcRenderer.on('server-error', listener);
     return () => ipcRenderer.removeListener('server-error', listener);
   },
+  onServerAutoStarted: (callback) => {
+    const listener = (_, info) => callback(info);
+    ipcRenderer.on('server-auto-started', listener);
+    return () => ipcRenderer.removeListener('server-auto-started', listener);
+  },
 
   // Tracking reference
   trackingGetDevices: () => ipcRenderer.invoke('tracking-get-devices'),

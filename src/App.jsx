@@ -80,6 +80,22 @@ function App() {
       addLog('error', `Ошибка сервера: ${err}`);
     }));
 
+    unsubs.push(window.uvra.onServerAutoStarted((info) => {
+      setServerRunning(true);
+      setServerPort(info.port);
+      addLog('info', `Сервер автоматически запущен на порту ${info.port}`);
+    }));
+
+    // Poll initial status in case server already started before renderer loaded
+    window.uvra.getStatus().then((status) => {
+      if (status.serverRunning) {
+        setServerRunning(true);
+        if (status.serverPort) setServerPort(status.serverPort);
+      }
+      if (status.leftPipeConnected) setLeftPipeConnected(true);
+      if (status.rightPipeConnected) setRightPipeConnected(true);
+    });
+
     const fpsInterval = setInterval(() => {
       setFps({
         left: fpsCounterRef.current.left,
