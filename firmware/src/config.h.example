@@ -9,8 +9,8 @@
 
 
 // ===== НАСТРОЙКИ WiFi =====
-#define WIFI_SSID     "WIFI"
-#define WIFI_PASSWORD "PASSWORD"
+#define WIFI_SSID     "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
 // ===== НАСТРОЙКИ UVRA =====
 // ТУТ НИЧЕГО НЕ ТРОГАЙ, ЕСЛИ НЕ ЗНАЕШЬ ЧТО ДЕЛАЕШЬ
