@@ -133,6 +133,8 @@ void loop() {
   int rawJoyY = analogRead(JOY_Y_PIN);
   float joyX = (rawJoyX - 2048.0f) / 2048.0f;
   float joyY = (rawJoyY - 2048.0f) / 2048.0f;
+  if (INVERT_JOY_X) joyX = -joyX;
+  if (INVERT_JOY_Y) joyY = -joyY;
   bool joyBtn = !digitalRead(JOY_BTN_PIN);
 
   bool btnA = !digitalRead(BTN_A_PIN);
