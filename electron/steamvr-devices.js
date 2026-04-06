@@ -258,14 +258,11 @@ function getDriverSettings() {
 
 /**
  * Path to the OpenGloves default.vrsettings file.
- * Checks %APPDATA%/UVRA/driver/ first (installed copy), then bundled path.
  */
 function getVRSettingsPath() {
-  const os = require('os');
-  const appDataPath = path.join(os.homedir(), 'AppData', 'Roaming', 'UVRA', 'driver', 'resources', 'settings', 'default.vrsettings');
-  const bundledPath = path.join(__dirname, '..', 'opengloves', 'resources', 'settings', 'default.vrsettings');
-  
-  const candidates = [appDataPath, bundledPath];
+  const candidates = [
+    path.join(__dirname, '..', 'opengloves', 'resources', 'settings', 'default.vrsettings'),
+  ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }

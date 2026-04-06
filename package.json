@@ -5,7 +5,7 @@
   "description": "UVRA - Universal VR Application for DIY VR Gloves",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
+    "dev": "concurrently --kill-others \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
     "dev:react": "vite",
     "dev:electron": "electron .",
     "build": "vite build && electron-builder",

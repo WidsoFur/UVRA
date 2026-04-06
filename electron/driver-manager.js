@@ -3,6 +3,11 @@ const path = require('path');
 const EventEmitter = require('events');
 const os = require('os');
 
+function readJsonFile(filePath) {
+  const text = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+  return JSON.parse(text);
+}
+
 /**
  * DriverManager handles automatic installation and configuration
  * of the OpenGloves SteamVR driver.
@@ -24,16 +29,6 @@ class DriverManager extends EventEmitter {
     this.driverPath = null;
     this.installed = false;
     this.status = 'unknown'; // unknown, not_found, installed, configured, error
-  }
-
-  /**
-   * Get the path where the driver should be installed (%APPDATA%/UVRA/driver/)
-   * This separates the driver files from the project folder so SteamVR
-   * locks the copy instead of the source.
-   */
-  getInstalledDriverPath() {
-    const { app } = require('electron');
-    return path.join(app.getPath('appData'), 'UVRA', 'driver');
   }
 
   /**
@@ -125,64 +120,41 @@ class DriverManager extends EventEmitter {
   }
 
   /**
-   * Check if OpenGloves driver is already installed.
-   * Priority: 1) %APPDATA% copy  2) old bundled registration  3) SteamVR/drivers/
+   * Check if OpenGloves driver is already installed
+   * Checks both SteamVR/drivers/ and external_drivers registration
    */
   checkInstalled() {
     if (!this.steamVRPath) {
       this.findSteamVR();
     }
 
-    const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
-    let vrpathData = null;
-    try {
-      if (fs.existsSync(vrpathFile)) {
-        vrpathData = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
-      }
-    } catch (e) { /* continue */ }
-
-    // 1. Check %APPDATA%/UVRA/driver/ (preferred location)
-    const installedPath = this.getInstalledDriverPath();
-    const installedDll = path.join(installedPath, 'bin', 'win64', 'driver_opengloves.dll');
-    const installedManifest = path.join(installedPath, 'driver.vrdrivermanifest');
-    if (fs.existsSync(installedDll) && fs.existsSync(installedManifest)) {
-      if (vrpathData) {
-        const registered = (vrpathData.external_drivers || []).some(p => {
-          const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
-          return normalized === installedPath;
-        });
-        if (registered) {
-          this.driverPath = installedPath;
-          this.installed = true;
-          this.status = 'configured';
-          this.emit('log', 'success', 'Драйвер OpenGloves установлен (external)');
-          return true;
-        }
-      }
-    }
-
-    // 2. Check old bundled path registration (legacy, from project folder)
+    // Check bundled driver registered as external
     const bundledPath = this.getBundledDriverPath();
-    if (bundledPath && vrpathData) {
+    if (bundledPath) {
       const driverDll = path.join(bundledPath, 'bin', 'win64', 'driver_opengloves.dll');
       const driverManifest = path.join(bundledPath, 'driver.vrdrivermanifest');
       if (fs.existsSync(driverDll) && fs.existsSync(driverManifest)) {
-        const registered = (vrpathData.external_drivers || []).some(p => {
-          const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
-          return normalized === bundledPath;
-        });
-        if (registered) {
-          // Legacy install detected — mark as installed but recommend re-install
-          this.driverPath = bundledPath;
-          this.installed = true;
-          this.status = 'configured';
-          this.emit('log', 'warning', 'Драйвер зарегистрирован из папки проекта (рекомендуется переустановить)');
-          return true;
-        }
+        const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
+        try {
+          if (fs.existsSync(vrpathFile)) {
+            const data = readJsonFile(vrpathFile);
+            const registered = (data.external_drivers || []).some(p => {
+              const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
+              return normalized === bundledPath;
+            });
+            if (registered) {
+              this.driverPath = bundledPath;
+              this.installed = true;
+              this.status = 'configured';
+              this.emit('log', 'success', 'Драйвер OpenGloves установлен (external)');
+              return true;
+            }
+          }
+        } catch (e) { /* continue */ }
       }
     }
 
-    // 3. Fallback: check SteamVR/drivers/opengloves/
+    // Fallback: check SteamVR/drivers/opengloves/
     if (this.driverPath) {
       const driverDll = path.join(this.driverPath, 'bin', 'win64', 'driver_opengloves.dll');
       const driverManifest = path.join(this.driverPath, 'driver.vrdrivermanifest');
@@ -215,8 +187,7 @@ class DriverManager extends EventEmitter {
   }
 
   /**
-   * Full installation: copy bundled driver to %APPDATA%/UVRA/driver/
-   * and register that copy with SteamVR. This keeps the project folder unlocked.
+   * Full installation: register bundled driver directly with SteamVR
    */
   async install() {
     try {
@@ -230,29 +201,20 @@ class DriverManager extends EventEmitter {
         throw new Error('SteamVR не найден. Убедитесь, что Steam и SteamVR установлены.');
       }
 
-      // 2. Find bundled driver (source)
+      // 2. Find bundled driver
       const bundledPath = this.getBundledDriverPath();
       if (!bundledPath) {
         throw new Error('Драйвер OpenGloves не найден в составе приложения');
       }
       this.emit('log', 'info', `Источник драйвера: ${bundledPath}`);
 
-      // 3. Copy driver to %APPDATA%/UVRA/driver/
-      const destPath = this.getInstalledDriverPath();
-      this.emit('log', 'info', `Копирование драйвера в ${destPath}...`);
-      this.copyFolderSync(bundledPath, destPath);
-      this.emit('log', 'success', 'Драйвер скопирован');
-
-      // 4. Configure the COPY for Named Pipes
-      this.driverPath = destPath;
+      // 3. Configure bundled driver for Named Pipes (in-place)
+      this.driverPath = bundledPath;
       await this.configureForNamedPipes();
 
-      // 5. Remove old bundled path from external_drivers if present
-      this._unregisterExternalDriver(bundledPath);
-
-      // 6. Register the %APPDATA% copy as external driver
+      // 4. Register as external driver (no admin rights needed)
       this.emit('log', 'info', 'Регистрация драйвера через openvrpaths.vrpath...');
-      const registered = this.registerExternalDriver(destPath);
+      const registered = this.registerExternalDriver(bundledPath);
       if (!registered) {
         throw new Error('Не удалось зарегистрировать драйвер в openvrpaths.vrpath');
       }
@@ -284,7 +246,7 @@ class DriverManager extends EventEmitter {
         return false;
       }
 
-      const data = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
+      const data = readJsonFile(vrpathFile);
       if (!data.external_drivers) {
         data.external_drivers = [];
       }
@@ -367,45 +329,7 @@ class DriverManager extends EventEmitter {
   }
 
   /**
-   * Remove a specific path from openvrpaths.vrpath external_drivers (silent)
-   */
-  _unregisterExternalDriver(driverPath) {
-    const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
-    try {
-      if (!fs.existsSync(vrpathFile)) return;
-      const data = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
-      if (!data.external_drivers) return;
-      const before = data.external_drivers.length;
-      data.external_drivers = data.external_drivers.filter(p => {
-        const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
-        return normalized !== driverPath;
-      });
-      if (data.external_drivers.length !== before) {
-        fs.writeFileSync(vrpathFile, JSON.stringify(data, null, '\t'), 'utf8');
-      }
-    } catch (e) { /* silent */ }
-  }
-
-  /**
-   * Recursively delete a folder
-   */
-  deleteFolderSync(dirPath) {
-    if (!fs.existsSync(dirPath)) return;
-    for (const item of fs.readdirSync(dirPath)) {
-      const full = path.join(dirPath, item);
-      if (fs.statSync(full).isDirectory()) {
-        this.deleteFolderSync(full);
-      } else {
-        fs.unlinkSync(full);
-      }
-    }
-    fs.rmdirSync(dirPath);
-  }
-
-  /**
-   * Uninstall the driver:
-   * 1. Remove from openvrpaths.vrpath external_drivers (both %APPDATA% and bundled paths)
-   * 2. Delete the %APPDATA% copy
+   * Uninstall the driver — remove from openvrpaths.vrpath external_drivers
    */
   uninstall() {
     const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
@@ -415,26 +339,14 @@ class DriverManager extends EventEmitter {
         return false;
       }
 
-      const data = JSON.parse(fs.readFileSync(vrpathFile, 'utf8'));
+      const data = readJsonFile(vrpathFile);
       if (data.external_drivers && data.external_drivers.length > 0) {
         const bundledPath = this.getBundledDriverPath();
-        const installedPath = this.getInstalledDriverPath();
         data.external_drivers = data.external_drivers.filter(p => {
           const normalized = p.replace(/\\\\/g, '\\').replace(/\//g, '\\');
-          return normalized !== bundledPath && normalized !== installedPath && normalized !== this.driverPath;
+          return normalized !== bundledPath && normalized !== this.driverPath;
         });
         fs.writeFileSync(vrpathFile, JSON.stringify(data, null, '\t'), 'utf8');
-      }
-
-      // Delete %APPDATA% copy
-      const installedPath = this.getInstalledDriverPath();
-      if (fs.existsSync(installedPath)) {
-        try {
-          this.deleteFolderSync(installedPath);
-          this.emit('log', 'info', 'Копия драйвера удалена из AppData');
-        } catch (e) {
-          this.emit('log', 'warning', `Не удалось удалить копию драйвера: ${e.message}`);
-        }
       }
 
       this.installed = false;
