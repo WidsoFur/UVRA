@@ -397,7 +397,7 @@ function setupIPC() {
   // Tracking reference — discover SteamVR devices from vrserver log
   ipcMain.handle('tracking-get-devices', async () => {
     try {
-      const devices = discoverDevicesFromLog();
+      const devices = discoverDevicesFromLog(appLogger);
       // Also check if the OpenGloves driver is reachable
       const driverSettings = await getDriverSettings();
       return {

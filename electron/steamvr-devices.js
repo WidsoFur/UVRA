@@ -6,11 +6,14 @@ const http = require('http');
  * Discovers SteamVR tracked devices by parsing vrserver.txt log.
  * Returns array of { id, serial, driver, type, model, manufacturer, role }
  */
-function discoverDevicesFromLog() {
-  const logPath = getSteamVRLogPath();
+function discoverDevicesFromLog(logger) {
+  const log = logger || { info() {}, warn() {}, error() {} };
+  const logPath = getSteamVRLogPath(log);
   if (!logPath || !fs.existsSync(logPath)) {
+    log.warn('vrserver.txt не найден — невозможно обнаружить устройства');
     return [];
   }
+  log.info(`Читаю лог SteamVR: ${logPath}`);
 
   const content = fs.readFileSync(logPath, 'utf8');
   const lines = content.split('\n');
@@ -140,40 +143,55 @@ function discoverDevicesFromLog() {
     }
   }
 
+  log.info(`Найдено устройств: ${devices.length} (подтверждённых: ${confirmedSerials.size})`);
+  for (const d of devices) {
+    log.info(`  [${d.id}] ${d.serial} | driver=${d.driver} type=${d.type} role=${d.role} confirmed=${d.confirmed}`);
+  }
+
   return devices;
 }
 
 /**
  * Get SteamVR vrserver.txt log path
  */
-function getSteamVRLogPath() {
+function getSteamVRLogPath(logger) {
+  const log = logger || { info() {}, warn() {}, error() {} };
   const os = require('os');
   const candidates = [];
 
   // 1. Try to find Steam path via openvrpaths.vrpath (most reliable)
+  const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
+  log.info(`Проверяю openvrpaths: ${vrpathFile} (exists: ${fs.existsSync(vrpathFile)})`);
+
   try {
-    const vrpathFile = path.join(os.homedir(), 'AppData', 'Local', 'openvr', 'openvrpaths.vrpath');
     if (fs.existsSync(vrpathFile)) {
       const text = fs.readFileSync(vrpathFile, 'utf8').replace(/^\uFEFF/, '');
       const data = JSON.parse(text);
+      log.info(`openvrpaths содержимое: ${JSON.stringify(data, null, 2)}`);
+
       // runtime paths point to SteamVR, Steam logs are two levels up
       if (data.runtime) {
         for (const runtimePath of data.runtime) {
           const normalized = runtimePath.replace(/\\\\/g, '\\').replace(/\//g, '\\');
-          // SteamVR is at Steam/steamapps/common/SteamVR, logs at Steam/logs/
           const steamRoot = path.resolve(normalized, '..', '..', '..', '..');
-          candidates.push(path.join(steamRoot, 'logs', 'vrserver.txt'));
+          const candidate = path.join(steamRoot, 'logs', 'vrserver.txt');
+          log.info(`runtime → steamRoot: ${steamRoot} → candidate: ${candidate}`);
+          candidates.push(candidate);
         }
       }
       // log paths directly from openvrpaths
       if (data.log) {
-        for (const logPath of data.log) {
-          const normalized = logPath.replace(/\\\\/g, '\\').replace(/\//g, '\\');
-          candidates.push(path.join(normalized, 'vrserver.txt'));
+        for (const logDir of data.log) {
+          const normalized = logDir.replace(/\\\\/g, '\\').replace(/\//g, '\\');
+          const candidate = path.join(normalized, 'vrserver.txt');
+          log.info(`log dir → candidate: ${candidate}`);
+          candidates.push(candidate);
         }
       }
     }
-  } catch (e) { /* continue */ }
+  } catch (e) {
+    log.error(`Ошибка чтения openvrpaths: ${e.message}`);
+  }
 
   // 2. Common hardcoded paths as fallback
   candidates.push(
@@ -183,9 +201,14 @@ function getSteamVRLogPath() {
     path.join(os.homedir(), 'Steam', 'logs', 'vrserver.txt'),
   );
 
+  log.info(`Всего кандидатов: ${candidates.length}`);
   for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+    const exists = fs.existsSync(p);
+    log.info(`  ${exists ? '✓' : '✗'} ${p}`);
+    if (exists) return p;
   }
+
+  log.warn('vrserver.txt не найден ни по одному из путей');
   return null;
 }
 

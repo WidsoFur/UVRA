@@ -54,7 +54,7 @@ class DriverManager extends EventEmitter {
     for (const configPath of steamConfigPaths) {
       try {
         if (fs.existsSync(configPath)) {
-          const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          const data = readJsonFile(configPath);
           if (data.runtime && data.runtime.length > 0) {
             for (const runtimePath of data.runtime) {
               const normalized = runtimePath.replace(/\\\\/g, '\\').replace(/\//g, '\\');
