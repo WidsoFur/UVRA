@@ -421,11 +421,11 @@ function setupIPC() {
       appLogger.info(`Tracking bind: hand=${hand}, deviceId=${deviceId}`);
       const role = hand === 'left' ? 1 : 2; // TrackedControllerRole_LeftHand=1, RightHand=2
 
-      // Approach 1: POST to internal server (port 52071) for immediate effect
+      // Approach 1: POST to internal server (port 52076) for immediate effect
       const postResult = await postTrackingReference(deviceId, role);
       appLogger.info(`Tracking reference POST result: ${JSON.stringify(postResult)}`);
 
-      // Approach 2: Set controller_override via external server (port 52060) as persistent fallback
+      // Approach 2: Set controller_override via external server (port 52075) as persistent fallback
       const currentSettings = await getDriverSettings();
       appLogger.info(`Current driver settings: ${JSON.stringify(currentSettings)}`);
       let leftId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_left || 0) : 0;

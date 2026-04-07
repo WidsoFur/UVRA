@@ -8,7 +8,7 @@ const FINGER_NAMES = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 /**
  * Named Pipe client for OpenGloves driver communication.
  * 
- * Writes to: \\.\pipe\vrapplication\input\glove\v2\<left/right>
+ * Writes to: \\.\pipe\uvra\input\glove\v2\<left/right>
  * 
  * Includes:
  *   - Per-finger min/max calibration (auto-detected during calibration phase)
@@ -36,7 +36,7 @@ class NamedPipeClient extends EventEmitter {
   constructor(hand) {
     super();
     this.hand = hand;
-    this.pipeName = `\\\\.\\pipe\\vrapplication\\input\\glove\\v2\\${hand}`;
+    this.pipeName = `\\\\.\\pipe\\uvra\\input\\glove\\v2\\${hand}`;
     this.pipe = null;
     this.connected = false;
     this.writing = false;

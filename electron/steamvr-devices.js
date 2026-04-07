@@ -213,7 +213,7 @@ function getSteamVRLogPath(logger) {
 }
 
 /**
- * POST tracking reference to the OpenGloves internal server (port 52071).
+ * POST tracking reference to the OpenGloves internal server (port 52076).
  * Returns true if successful.
  */
 function postTrackingReference(deviceId, role) {
@@ -222,7 +222,7 @@ function postTrackingReference(deviceId, role) {
 
     const req = http.request({
       hostname: '127.0.0.1',
-      port: 52071,
+      port: 52076,
       path: '/tracking_reference',
       method: 'POST',
       headers: {
@@ -243,7 +243,7 @@ function postTrackingReference(deviceId, role) {
 }
 
 /**
- * Set controller_override settings via the OpenGloves external server (port 52060).
+ * Set controller_override settings via the OpenGloves external server (port 52075).
  * This is a persistent fallback — survives SteamVR restarts.
  */
 function setControllerOverride(leftId, rightId) {
@@ -259,7 +259,7 @@ function setControllerOverride(leftId, rightId) {
 
     const req = http.request({
       hostname: '127.0.0.1',
-      port: 52060,
+      port: 52075,
       path: '/settings',
       method: 'POST',
       headers: {
@@ -280,13 +280,13 @@ function setControllerOverride(leftId, rightId) {
 }
 
 /**
- * Get current OpenGloves driver settings from the external server (port 52060).
+ * Get current OpenGloves driver settings from the external server (port 52075).
  */
 function getDriverSettings() {
   return new Promise((resolve) => {
     const req = http.get({
       hostname: '127.0.0.1',
-      port: 52060,
+      port: 52075,
       path: '/settings',
       timeout: 2000,
     }, (res) => {
@@ -393,7 +393,7 @@ async function writePoseOffsets(offsets) {
 
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 
-    // Also push to running driver via external server (port 52060)
+    // Also push to running driver via external server (port 52075)
     const driverResult = await pushPoseOffsetsToDriver(offsets);
 
     return { success: true, fileSaved: true, driverUpdated: driverResult.success };
@@ -415,7 +415,7 @@ function pushPoseOffsetsToDriver(offsets) {
 
     const req = http.request({
       hostname: '127.0.0.1',
-      port: 52060,
+      port: 52075,
       path: `/functions/pose_offset/${hand}`,
       method: 'POST',
       headers: {
