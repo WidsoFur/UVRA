@@ -403,32 +403,20 @@ async function writePoseOffsets(offsets) {
 }
 
 /**
- * Push pose offsets to the running OpenGloves driver via the external server POST /settings.
+ * Push pose offsets to the running OpenGloves driver via POST /functions/pose_offset/<hand>.
+ * Updates in real-time without SteamVR restart.
  */
 function pushPoseOffsetsToDriver(offsets) {
-  return new Promise((resolve) => {
-    const settings = {
-      pose_settings: {
-        left_x_offset_position: offsets.left.pos.x,
-        left_y_offset_position: offsets.left.pos.y,
-        left_z_offset_position: offsets.left.pos.z,
-        left_x_offset_degrees: offsets.left.rot.x,
-        left_y_offset_degrees: offsets.left.rot.y,
-        left_z_offset_degrees: offsets.left.rot.z,
-        right_x_offset_position: offsets.right.pos.x,
-        right_y_offset_position: offsets.right.pos.y,
-        right_z_offset_position: offsets.right.pos.z,
-        right_x_offset_degrees: offsets.right.rot.x,
-        right_y_offset_degrees: offsets.right.rot.y,
-        right_z_offset_degrees: offsets.right.rot.z,
-      }
-    };
-    const postData = JSON.stringify(settings);
+  const postForHand = (hand, pos, rot) => new Promise((resolve) => {
+    const postData = JSON.stringify({
+      x: pos.x, y: pos.y, z: pos.z,
+      rx: rot.x, ry: rot.y, rz: rot.z,
+    });
 
     const req = http.request({
       hostname: '127.0.0.1',
       port: 52060,
-      path: '/settings',
+      path: `/functions/pose_offset/${hand}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -445,6 +433,13 @@ function pushPoseOffsetsToDriver(offsets) {
     req.write(postData);
     req.end();
   });
+
+  return Promise.all([
+    postForHand('left', offsets.left.pos, offsets.left.rot),
+    postForHand('right', offsets.right.pos, offsets.right.rot),
+  ]).then(([left, right]) => ({
+    success: left.success || right.success,
+  }));
 }
 
 /**
