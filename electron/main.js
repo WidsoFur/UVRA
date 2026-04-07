@@ -437,27 +437,8 @@ function setupIPC() {
       const overrideResult = await setControllerOverride(leftId, rightId);
       appLogger.info(`Controller override result: ${JSON.stringify(overrideResult)}`);
 
-      // Approach 3: Write to default.vrsettings file as persistent fallback
-      let fileSaved = false;
-      try {
-        const settingsPath = getVRSettingsPath();
-        if (settingsPath) {
-          const raw = fs.readFileSync(settingsPath, 'utf8');
-          const settings = JSON.parse(raw);
-          if (!settings.pose_settings) settings.pose_settings = {};
-          settings.pose_settings.controller_override = true;
-          settings.pose_settings.controller_override_left = leftId;
-          settings.pose_settings.controller_override_right = rightId;
-          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-          fileSaved = true;
-          appLogger.info(`Привязка сохранена в файл: left=${leftId}, right=${rightId}`);
-        }
-      } catch (fileErr) {
-        appLogger.error(`Ошибка записи привязки в файл: ${fileErr.message}`);
-      }
-
       return {
-        success: postResult.success || overrideResult.success || fileSaved,
+        success: postResult.success || overrideResult.success,
         hand,
         deviceId,
         methods: {
