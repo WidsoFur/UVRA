@@ -120,10 +120,12 @@ class NamedPipeClient extends EventEmitter {
     if (this.calibrating) return;
     this.calibrationDuration = durationMs || 5000;
     this.calibrating = true;
+    this.calibrationSampleCount = 0;
     this.calibrationSamples = {
       min: [Infinity, Infinity, Infinity, Infinity, Infinity],
       max: [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity],
     };
+    console.log(`[Calibration] START ${this.hand}, duration=${this.calibrationDuration}ms`);
     this.emit('calibrationStart', { hand: this.hand, duration: this.calibrationDuration });
 
     this.calibrationTimer = setTimeout(() => {
@@ -137,9 +139,14 @@ class NamedPipeClient extends EventEmitter {
    */
   feedCalibrationData(raw) {
     if (!this.calibrating || !raw || raw.length < 5) return;
+    this.calibrationSampleCount++;
     for (let i = 0; i < 5; i++) {
       if (raw[i] < this.calibrationSamples.min[i]) this.calibrationSamples.min[i] = raw[i];
       if (raw[i] > this.calibrationSamples.max[i]) this.calibrationSamples.max[i] = raw[i];
+    }
+    // Log every 100 samples
+    if (this.calibrationSampleCount % 100 === 0) {
+      console.log(`[Calibration] ${this.hand} samples=${this.calibrationSampleCount} min=${JSON.stringify(this.calibrationSamples.min)} max=${JSON.stringify(this.calibrationSamples.max)}`);
     }
   }
 
@@ -150,15 +157,23 @@ class NamedPipeClient extends EventEmitter {
       this.calibrationTimer = null;
     }
 
-    // Apply collected min/max, with safety margin
+    console.log(`[Calibration] FINISH ${this.hand} total_samples=${this.calibrationSampleCount}`);
+    console.log(`[Calibration] BEFORE: min=${JSON.stringify(this.calibration.min)} max=${JSON.stringify(this.calibration.max)}`);
+    console.log(`[Calibration] RECORDED: min=${JSON.stringify(this.calibrationSamples.min)} max=${JSON.stringify(this.calibrationSamples.max)}`);
+
+    // Apply collected min/max
     for (let i = 0; i < 5; i++) {
       const min = this.calibrationSamples.min[i];
       const max = this.calibrationSamples.max[i];
       if (min < max && isFinite(min) && isFinite(max)) {
         this.calibration.min[i] = min;
         this.calibration.max[i] = max;
+      } else {
+        console.log(`[Calibration] WARNING: finger ${i} skipped (min=${min}, max=${max})`);
       }
     }
+
+    console.log(`[Calibration] AFTER: min=${JSON.stringify(this.calibration.min)} max=${JSON.stringify(this.calibration.max)}`);
 
     this._saveCalibration();
     this.emit('calibrationEnd', {
@@ -305,13 +320,24 @@ class NamedPipeClient extends EventEmitter {
     return buf;
   }
 
+  /**
+   * Process incoming data (calibration, normalization, smoothing).
+   * Always works — even without pipe connection.
+   * Returns processed data for UI display.
+   */
+  updateData(data) {
+    return this.processData(data);
+  }
+
   sendData(data) {
+    // Always process data (for calibration and smoothing) even if pipe is not connected
+    const processed = this.processData(data);
+
     if (!this.connected || !this.pipe || this.writing) {
       return false;
     }
 
     try {
-      const processed = this.processData(data);
       const packed = this.packData(processed);
       this.writing = true;
       this.pipe.write(packed, () => {

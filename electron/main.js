@@ -148,6 +148,13 @@ function initServices() {
     }
 
     const pipe = data.hand === 'left' ? leftPipe : rightPipe;
+
+    // Debug: log raw values and calibration state periodically
+    if (!pipe._debugCounter) pipe._debugCounter = 0;
+    if (pipe._debugCounter++ % 500 === 0) {
+      appLogger.info(`[${data.hand}] raw=${JSON.stringify(data.raw)} cal_min=${JSON.stringify(pipe.calibration.min)} cal_max=${JSON.stringify(pipe.calibration.max)} calibrating=${pipe.calibrating}`);
+    }
+
     pipe.sendData(data);
 
     safeSend('glove-data', data);
@@ -421,30 +428,14 @@ function setupIPC() {
       appLogger.info(`Tracking bind: hand=${hand}, deviceId=${deviceId}`);
       const role = hand === 'left' ? 1 : 2; // TrackedControllerRole_LeftHand=1, RightHand=2
 
-      // Approach 1: POST to internal server (port 52076) for immediate effect
+      // POST to internal server (port 52076) for immediate effect
       const postResult = await postTrackingReference(deviceId, role);
       appLogger.info(`Tracking reference POST result: ${JSON.stringify(postResult)}`);
 
-      // Approach 2: Set controller_override via external server (port 52075) as persistent fallback
-      const currentSettings = await getDriverSettings();
-      appLogger.info(`Current driver settings: ${JSON.stringify(currentSettings)}`);
-      let leftId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_left || 0) : 0;
-      let rightId = currentSettings.success ? (currentSettings.settings?.pose_settings?.controller_override_right || 0) : 0;
-
-      if (hand === 'left') leftId = deviceId;
-      else rightId = deviceId;
-
-      const overrideResult = await setControllerOverride(leftId, rightId);
-      appLogger.info(`Controller override result: ${JSON.stringify(overrideResult)}`);
-
       return {
-        success: postResult.success || overrideResult.success,
+        success: postResult.success,
         hand,
         deviceId,
-        methods: {
-          internalServer: postResult.success,
-          controllerOverride: overrideResult.success,
-        },
       };
     } catch (err) {
       appLogger.error(`Tracking bind error: ${err.message}`);
