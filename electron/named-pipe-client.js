@@ -229,6 +229,9 @@ class NamedPipeClient extends EventEmitter {
     const hasRaw = data.raw && data.raw.length >= 5;
 
     // Feed calibration if active
+    if (this.calibrating) {
+      console.log(`[Calibration] processData called for ${this.hand}, hasRaw=${hasRaw}, raw=${JSON.stringify(data.raw)}`);
+    }
     if (this.calibrating && hasRaw) {
       this.feedCalibrationData(data.raw);
     }
