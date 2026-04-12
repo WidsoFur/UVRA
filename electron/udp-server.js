@@ -260,6 +260,13 @@ class UDPServer extends EventEmitter {
     const btnByte = msg[offset]; offset += 1;
     const triggerValue = msg.readFloatLE(offset);
 
+    // Convert normalized flexion back to raw ADC values for calibration
+    const raw = flexion.map(finger => {
+      // Use middle joint (index 1) as representative raw value
+      const midJoint = finger[1];
+      return Math.round(midJoint * 4095);
+    });
+
     return {
       hand,
       flexion,
@@ -274,6 +281,7 @@ class UDPServer extends EventEmitter {
       menu:       !!(btnByte & 0x40),
       calibrate:  !!(btnByte & 0x80),
       triggerValue,
+      raw, // Raw ADC values for calibration
       source: rinfo.address,
     };
   }
@@ -315,6 +323,13 @@ class UDPServer extends EventEmitter {
       menu: map.N === '1',
       calibrate: map.O === '1',
       triggerValue: normalize('P'),
+      raw: [ // Raw ADC values for calibration
+        parseFloat(map.A || '0'),
+        parseFloat(map.B || '0'),
+        parseFloat(map.C || '0'),
+        parseFloat(map.D || '0'),
+        parseFloat(map.E || '0'),
+      ],
       source: rinfo.address,
     };
   }
@@ -352,6 +367,13 @@ class UDPServer extends EventEmitter {
       menu: 'N' in values,
       calibrate: 'O' in values,
       triggerValue: normalize('P'),
+      raw: [ // Raw ADC values for calibration
+        values.A || 0,
+        values.B || 0,
+        values.C || 0,
+        values.D || 0,
+        values.E || 0,
+      ],
       source: rinfo.address,
     };
   }
