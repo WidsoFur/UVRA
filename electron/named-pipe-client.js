@@ -63,6 +63,11 @@ class NamedPipeClient extends EventEmitter {
     // Deadzone: percentage of range to clamp at edges
     this.deadzone = 0.03; // 3%
 
+    // Dynamic calibration: slowly expand min/max range during use
+    this.dynamicCalibration = true;
+    this.dynamicRate = 0.002; // how fast to expand per sample (lower = slower, more stable)
+    this._dynamicSaveCounter = 0;
+
     // Try to load saved calibration
     this._loadCalibration();
   }
@@ -111,71 +116,96 @@ class NamedPipeClient extends EventEmitter {
   }
 
   // ========== CALIBRATION ==========
+  // Two-phase calibration:
+  //   Phase 1 "open"  — user holds hand fully open (records min values)
+  //   Phase 2 "close" — user holds hand fully closed (records max values)
+  // Each phase has its own timer. Margin is applied to make 0%/100% easier to reach.
 
-  /**
-   * Start calibration: record min/max for each finger over a duration.
-   * User should fully open and fully close their hand during this time.
-   */
-  startCalibration(durationMs) {
+  static CALIBRATION_MARGIN = 0.08; // 8% margin on each side
+
+  startCalibration(phaseDurationMs) {
     if (this.calibrating) return;
-    this.calibrationDuration = durationMs || 5000;
+    this.calibrationPhaseDuration = phaseDurationMs || 5000;
     this.calibrating = true;
+    this.calibrationPhase = 'open'; // 'open' → 'close' → finish
     this.calibrationSampleCount = 0;
     this.calibrationSamples = {
       min: [Infinity, Infinity, Infinity, Infinity, Infinity],
       max: [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity],
     };
-    console.log(`[Calibration] START ${this.hand}, duration=${this.calibrationDuration}ms`);
-    this.emit('calibrationStart', { hand: this.hand, duration: this.calibrationDuration });
+
+    console.log(`[Calibration] START ${this.hand}, phase=open, duration=${this.calibrationPhaseDuration}ms per phase`);
+    this.emit('calibrationStart', { hand: this.hand, phase: 'open', duration: this.calibrationPhaseDuration });
+    this.emit('calibrationPhase', { hand: this.hand, phase: 'open', remaining: this.calibrationPhaseDuration });
+
+    // Phase 1 timer: open hand
+    this.calibrationTimer = setTimeout(() => {
+      this._startClosePhase();
+    }, this.calibrationPhaseDuration);
+  }
+
+  _startClosePhase() {
+    this.calibrationPhase = 'close';
+    console.log(`[Calibration] ${this.hand} phase=close, min so far=[${this.calibrationSamples.min.map(v => v.toFixed(3))}]`);
+    this.emit('calibrationPhase', { hand: this.hand, phase: 'close', remaining: this.calibrationPhaseDuration });
 
     this.calibrationTimer = setTimeout(() => {
       this.finishCalibration();
-    }, this.calibrationDuration);
+    }, this.calibrationPhaseDuration);
   }
 
   /**
-   * Feed normalized flexion values during calibration to track min/max.
-   * flexion = [[thumb], [index], [middle], [ring], [pinky]] (each with 4 joints)
+   * Feed flexion values during calibration.
+   * In 'open' phase — records min values. In 'close' phase — records max values.
    */
   feedCalibrationData(flexion) {
     if (!this.calibrating || !flexion || flexion.length < 5) return;
     this.calibrationSampleCount++;
+
     for (let i = 0; i < 5; i++) {
-      // Use middle joint (index 1) as representative value
       const val = flexion[i][1] || 0;
-      if (val < this.calibrationSamples.min[i]) this.calibrationSamples.min[i] = val;
-      if (val > this.calibrationSamples.max[i]) this.calibrationSamples.max[i] = val;
-    }
-    // Log every 100 samples
-    if (this.calibrationSampleCount % 100 === 0) {
-      console.log(`[Calibration] ${this.hand} samples=${this.calibrationSampleCount} min=${JSON.stringify(this.calibrationSamples.min)} max=${JSON.stringify(this.calibrationSamples.max)}`);
+      if (this.calibrationPhase === 'open') {
+        if (val < this.calibrationSamples.min[i]) this.calibrationSamples.min[i] = val;
+      } else {
+        if (val > this.calibrationSamples.max[i]) this.calibrationSamples.max[i] = val;
+      }
     }
   }
 
   finishCalibration() {
     this.calibrating = false;
+    this.calibrationPhase = null;
     if (this.calibrationTimer) {
       clearTimeout(this.calibrationTimer);
       this.calibrationTimer = null;
     }
 
-    console.log(`[Calibration] FINISH ${this.hand} total_samples=${this.calibrationSampleCount}`);
-    console.log(`[Calibration] BEFORE: min=${JSON.stringify(this.calibration.min)} max=${JSON.stringify(this.calibration.max)}`);
-    console.log(`[Calibration] RECORDED: min=${JSON.stringify(this.calibrationSamples.min)} max=${JSON.stringify(this.calibrationSamples.max)}`);
+    console.log(`[Calibration] FINISH ${this.hand} samples=${this.calibrationSampleCount}`);
+    console.log(`[Calibration] RECORDED: min=[${this.calibrationSamples.min.map(v => v.toFixed(3))}] max=[${this.calibrationSamples.max.map(v => v.toFixed(3))}]`);
 
-    // Apply collected min/max
+    const margin = NamedPipeClient.CALIBRATION_MARGIN;
+
     for (let i = 0; i < 5; i++) {
-      const min = this.calibrationSamples.min[i];
-      const max = this.calibrationSamples.max[i];
-      if (min < max && isFinite(min) && isFinite(max)) {
+      let min = this.calibrationSamples.min[i];
+      let max = this.calibrationSamples.max[i];
+
+      if (!isFinite(min) || !isFinite(max) || min >= max) {
+        console.log(`[Calibration] WARNING: finger ${i} skipped (min=${min}, max=${max})`);
+        continue;
+      }
+
+      // Apply margin: shrink the range so 0% and 100% are easier to reach
+      const range = max - min;
+      min = min + range * margin;
+      max = max - range * margin;
+
+      if (min < max) {
         this.calibration.min[i] = min;
         this.calibration.max[i] = max;
-      } else {
-        console.log(`[Calibration] WARNING: finger ${i} skipped (min=${min}, max=${max})`);
       }
     }
 
-    console.log(`[Calibration] AFTER: min=${JSON.stringify(this.calibration.min)} max=${JSON.stringify(this.calibration.max)}`);
+    console.log(`[Calibration] APPLIED (with ${margin * 100}% margin): min=[${this.calibration.min.map(v => v.toFixed(3))}] max=[${this.calibration.max.map(v => v.toFixed(3))}]`);
 
     this._saveCalibration();
     this.emit('calibrationEnd', {
@@ -186,6 +216,7 @@ class NamedPipeClient extends EventEmitter {
 
   cancelCalibration() {
     this.calibrating = false;
+    this.calibrationPhase = null;
     if (this.calibrationTimer) {
       clearTimeout(this.calibrationTimer);
       this.calibrationTimer = null;
@@ -225,24 +256,55 @@ class NamedPipeClient extends EventEmitter {
   /**
    * Process incoming data: apply calibration, smoothing, then pack.
    */
+  /**
+   * Dynamic calibration: if a value is outside the current min/max range,
+   * slowly move the boundary towards it. This gradually improves calibration
+   * during normal use without needing a manual calibration step.
+   */
+  _dynamicCalibrate(fingerIndex, normalizedVal) {
+    if (!this.dynamicCalibration || this.calibrating) return;
+
+    const min = this.calibration.min[fingerIndex];
+    const max = this.calibration.max[fingerIndex];
+    let changed = false;
+
+    if (normalizedVal < min) {
+      this.calibration.min[fingerIndex] = min + (normalizedVal - min) * this.dynamicRate;
+      changed = true;
+    }
+    if (normalizedVal > max) {
+      this.calibration.max[fingerIndex] = max + (normalizedVal - max) * this.dynamicRate;
+      changed = true;
+    }
+
+    // Save periodically if changed (every ~5 seconds at 100Hz)
+    if (changed) {
+      this._dynamicSaveCounter++;
+      if (this._dynamicSaveCounter >= 500) {
+        this._dynamicSaveCounter = 0;
+        this._saveCalibration();
+      }
+    }
+  }
+
   processData(data) {
     // Feed calibration if active
     if (this.calibrating) {
-      console.log(`[Calibration] processData called for ${this.hand}`);
       this.feedCalibrationData(data.flexion);
     }
 
-    // Apply calibration to finger flexion
+    // Apply calibration + EMA smoothing to finger flexion
     const flexion = [];
     for (let i = 0; i < 5; i++) {
-      // Use middle joint (index 1) as representative value
       const normalizedVal = data.flexion[i][1] || 0;
+
+      // Dynamic calibration: expand range in background
+      this._dynamicCalibrate(i, normalizedVal);
+
       const calibratedVal = this.applyCalibration(normalizedVal, i);
-      if (i === 0) {
-        flexion.push([0, calibratedVal, calibratedVal, 0]);
-      } else {
-        flexion.push([0, calibratedVal, calibratedVal, calibratedVal]);
-      }
+      this.smoothed[i] = this.smooth(calibratedVal, this.smoothed[i]);
+      const val = this.smoothed[i];
+      flexion.push([val, val, val, val]);
     }
 
     // Smooth joystick

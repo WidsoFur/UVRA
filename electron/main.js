@@ -77,22 +77,19 @@ function initServices() {
   });
 
   // Forward calibration events to renderer
-  leftPipe.on('calibrationStart', (info) => {
-    appLogger.event('Calibration started', info);
-    safeSend('calibration-start', info);
-  });
-  leftPipe.on('calibrationEnd', (info) => {
-    appLogger.event('Calibration ended', info);
-    safeSend('calibration-end', info);
-  });
-  rightPipe.on('calibrationStart', (info) => {
-    appLogger.event('Calibration started', info);
-    safeSend('calibration-start', info);
-  });
-  rightPipe.on('calibrationEnd', (info) => {
-    appLogger.event('Calibration ended', info);
-    safeSend('calibration-end', info);
-  });
+  for (const pipe of [leftPipe, rightPipe]) {
+    pipe.on('calibrationStart', (info) => {
+      appLogger.event('Calibration started', info);
+      safeSend('calibration-start', info);
+    });
+    pipe.on('calibrationPhase', (info) => {
+      safeSend('calibration-phase', info);
+    });
+    pipe.on('calibrationEnd', (info) => {
+      appLogger.event('Calibration ended', info);
+      safeSend('calibration-end', info);
+    });
+  }
 
   udpServer = new UDPServer();
   driverManager = new DriverManager();

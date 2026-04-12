@@ -168,6 +168,9 @@ function App() {
 
   const [calibrating, setCalibrating] = useState({ left: false, right: false });
   const [calibrationModal, setCalibrationModal] = useState(null); // null or 'left'/'right'
+  const [calibrationPhase, setCalibrationPhase] = useState(null); // null, 'open', 'close'
+  const [calibrationCountdown, setCalibrationCountdown] = useState(0);
+  const calibrationIntervalRef = React.useRef(null);
 
   const handleCalibrate = (hand) => {
     setCalibrationModal(hand);
@@ -178,20 +181,53 @@ function App() {
     setCalibrationModal(null);
     if (window.uvra && hand) {
       setCalibrating(prev => ({ ...prev, [hand]: true }));
-      await window.uvra.calibrate(hand, 10000);
-      addLog('info', `Калибровка ${hand === 'left' ? 'левой' : 'правой'} — сжимайте и разжимайте руку (10 сек)...`);
+      setCalibrationPhase('open');
+      setCalibrationCountdown(5);
+      await window.uvra.calibrate(hand, 5000); // 5 сек на фазу
+      addLog('info', `Калибровка ${hand === 'left' ? 'левой' : 'правой'} — раскройте ладонь...`);
     }
   };
 
   const cancelCalibration = () => {
     setCalibrationModal(null);
+    setCalibrationPhase(null);
+    setCalibrationCountdown(0);
+    if (calibrationIntervalRef.current) {
+      clearInterval(calibrationIntervalRef.current);
+      calibrationIntervalRef.current = null;
+    }
   };
+
+  // Countdown timer for calibration phases
+  useEffect(() => {
+    if (calibrationPhase && calibrationCountdown > 0) {
+      calibrationIntervalRef.current = setInterval(() => {
+        setCalibrationCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(calibrationIntervalRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(calibrationIntervalRef.current);
+    }
+  }, [calibrationPhase, calibrationCountdown > 0]);
 
   useEffect(() => {
     if (!window.uvra) return;
     const unsubs = [];
+    unsubs.push(window.uvra.onCalibrationPhase?.((info) => {
+      setCalibrationPhase(info.phase);
+      setCalibrationCountdown(Math.ceil(info.remaining / 1000));
+      if (info.phase === 'close') {
+        addLog('info', `Калибровка — теперь сожмите кулак...`);
+      }
+    }));
     unsubs.push(window.uvra.onCalibrationEnd((info) => {
       setCalibrating(prev => ({ ...prev, [info.hand]: false }));
+      setCalibrationPhase(null);
+      setCalibrationCountdown(0);
       addLog('success', `Калибровка ${info.hand === 'left' ? 'левой' : 'правой'} завершена`);
     }));
     return () => unsubs.forEach(fn => fn && fn());
@@ -269,29 +305,22 @@ function App() {
               Калибровка — {calibrationModal === 'left' ? 'левая' : 'правая'} рука
             </h3>
             <p className="text-xs text-uvra-text-dim mb-4">
-              Процесс займёт 10 секунд. Следуйте инструкции:
+              Калибровка состоит из двух фаз по 5 секунд:
             </p>
 
             <div className="space-y-2.5 mb-5">
               <div className="flex items-start gap-3 p-2.5 bg-uvra-bg rounded-lg">
-                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-uvra-accent/20 text-uvra-accent flex items-center justify-center font-bold text-[10px]">1</span>
+                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-[10px]">1</span>
                 <div>
-                  <div className="text-xs font-medium text-uvra-text">Начальная позиция</div>
-                  <div className="text-[11px] text-uvra-text-dim">Полностью раскройте ладонь, выпрямите все пальцы</div>
+                  <div className="text-xs font-medium text-uvra-text">Раскройте ладонь (5 сек)</div>
+                  <div className="text-[11px] text-uvra-text-dim">Полностью выпрямите все пальцы и держите</div>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-2.5 bg-uvra-bg rounded-lg">
-                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-uvra-accent/20 text-uvra-accent flex items-center justify-center font-bold text-[10px]">2</span>
+                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center font-bold text-[10px]">2</span>
                 <div>
-                  <div className="text-xs font-medium text-uvra-text">Движение</div>
-                  <div className="text-[11px] text-uvra-text-dim">Медленно сожмите кулак до упора, затем снова раскройте. Повторите 3–4 раза</div>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 p-2.5 bg-uvra-bg rounded-lg">
-                <span className="text-sm mt-0.5 shrink-0 w-5 h-5 rounded-full bg-uvra-accent/20 text-uvra-accent flex items-center justify-center font-bold text-[10px]">3</span>
-                <div>
-                  <div className="text-xs font-medium text-uvra-text">Каждый палец</div>
-                  <div className="text-[11px] text-uvra-text-dim">Постарайтесь также согнуть каждый палец по отдельности, особенно большой</div>
+                  <div className="text-xs font-medium text-uvra-text">Сожмите кулак (5 сек)</div>
+                  <div className="text-[11px] text-uvra-text-dim">Полностью согните все пальцы и держите</div>
                 </div>
               </div>
             </div>
@@ -309,6 +338,30 @@ function App() {
               >
                 Начать калибровку
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Calibration phase overlay */}
+      {calibrationPhase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="text-center">
+            <div className={`text-6xl font-bold mb-4 ${calibrationPhase === 'open' ? 'text-green-400' : 'text-orange-400'}`}>
+              {calibrationCountdown}
+            </div>
+            <div className="text-xl font-semibold text-uvra-text mb-2">
+              {calibrationPhase === 'open' ? 'Раскройте ладонь' : 'Сожмите кулак'}
+            </div>
+            <div className="text-sm text-uvra-text-dim">
+              {calibrationPhase === 'open'
+                ? 'Полностью выпрямите все пальцы и держите'
+                : 'Полностью согните все пальцы и держите'
+              }
+            </div>
+            <div className="mt-4 flex justify-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${calibrationPhase === 'open' ? 'bg-green-400 animate-pulse' : 'bg-green-400/30'}`} />
+              <div className={`w-3 h-3 rounded-full ${calibrationPhase === 'close' ? 'bg-orange-400 animate-pulse' : 'bg-orange-400/30'}`} />
             </div>
           </div>
         </div>

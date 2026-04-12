@@ -23,14 +23,15 @@ const EventEmitter = require('events');
  *   "triggerValue": 0.0
  * }
  * 
- * Also supports a compact binary format (66 bytes):
- *   [1 byte hand (0=left,1=right)]
- *   [80 bytes: 20 floats for flexion (5 fingers × 4 joints)]
- *   [20 bytes: 5 floats for splay]
- *   [8 bytes: 2 floats for joystick x,y]
- *   [1 byte: button bitmask]
- *   [4 bytes: trigger value float]
- *   Total: 114 bytes
+ * Also supports UVRA Binary v1 (46 bytes):
+ *   [0]      0x55 — magic byte
+ *   [1]      hand: 0=left, 1=right
+ *   [2..18]  MAC: 17 bytes "XX:XX:XX:XX:XX:XX\0"
+ *   [19..28] raw flex: 5 × uint16 LE (raw ADC 0-4095)
+ *   [29..38] norm flex: 5 × uint16 LE (0-10000 → 0.0-1.0)
+ *   [39..42] joystick: 2 × int16 LE (X, Y, -10000..10000)
+ *   [43]     buttons: bitmask
+ *   [44..45] trigger: uint16 LE (0-10000)
  */
 class UDPServer extends EventEmitter {
   constructor() {
@@ -178,13 +179,18 @@ class UDPServer extends EventEmitter {
   }
 
   parseMessage(msg, rinfo) {
+    // UVRA Binary v1 (46 bytes, magic 0x55)
+    if (msg.length === 46 && msg[0] === 0x55) {
+      return this.parseBinaryV1(msg, rinfo);
+    }
+
     // Try JSON first
     if (msg[0] === 0x7B) { // '{'
       const json = JSON.parse(msg.toString('utf8'));
       return this.normalizeJsonData(json, rinfo);
     }
 
-    // Try binary format (114 bytes)
+    // Legacy binary format (114 bytes)
     if (msg.length === 114) {
       return this.parseBinaryData(msg, rinfo);
     }
@@ -230,6 +236,64 @@ class UDPServer extends EventEmitter {
       triggerValue: json.triggerValue || 0,
       raw: json.raw || null,
       mac: json.mac || null,
+      source: rinfo.address,
+    };
+  }
+
+  parseBinaryV1(msg, rinfo) {
+    // UVRA Binary v1 — 46 bytes
+    let offset = 1; // skip magic 0x55
+
+    const hand = msg[offset++] === 0 ? 'left' : 'right';
+
+    // MAC address (17 bytes string)
+    const mac = msg.slice(offset, offset + 17).toString('utf8').replace(/\0/g, '');
+    offset += 17;
+
+    // Raw flex ADC (5 × uint16 LE)
+    const raw = [];
+    for (let i = 0; i < 5; i++) {
+      raw.push(msg.readUInt16LE(offset));
+      offset += 2;
+    }
+
+    // Normalized flex (5 × uint16 LE, 0-10000 → 0.0-1.0)
+    // Expand 1 value per finger → 4 identical joints
+    const flexion = [];
+    for (let i = 0; i < 5; i++) {
+      const val = msg.readUInt16LE(offset) / 10000.0;
+      offset += 2;
+      flexion.push([val, val, val, val]);
+    }
+
+    // Joystick (2 × int16 LE, -10000..10000 → -1.0..1.0)
+    const joyX = msg.readInt16LE(offset) / 10000.0;
+    offset += 2;
+    const joyY = msg.readInt16LE(offset) / 10000.0;
+    offset += 2;
+
+    // Buttons bitmask
+    const btnByte = msg[offset++];
+
+    // Trigger (uint16 LE, 0-10000 → 0.0-1.0)
+    const triggerValue = msg.readUInt16LE(offset) / 10000.0;
+
+    return {
+      hand,
+      flexion,
+      splay: [0.5, 0.5, 0.5, 0.5, 0.5],
+      joyX, joyY,
+      joyButton:  !!(btnByte & 0x01),
+      trgButton:  !!(btnByte & 0x02),
+      aButton:    !!(btnByte & 0x04),
+      bButton:    !!(btnByte & 0x08),
+      grab:       !!(btnByte & 0x10),
+      pinch:      !!(btnByte & 0x20),
+      menu:       !!(btnByte & 0x40),
+      calibrate:  !!(btnByte & 0x80),
+      triggerValue,
+      raw,
+      mac: mac || null,
       source: rinfo.address,
     };
   }

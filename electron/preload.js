@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('uvra', {
     ipcRenderer.on('calibration-start', listener);
     return () => ipcRenderer.removeListener('calibration-start', listener);
   },
+  onCalibrationPhase: (callback) => {
+    const listener = (_, info) => callback(info);
+    ipcRenderer.on('calibration-phase', listener);
+    return () => ipcRenderer.removeListener('calibration-phase', listener);
+  },
   onCalibrationEnd: (callback) => {
     const listener = (_, info) => callback(info);
     ipcRenderer.on('calibration-end', listener);

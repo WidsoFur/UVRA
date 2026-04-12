@@ -1,8 +1,13 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <ArduinoJson.h>
 #include "config.h"
+
+// ESP32-C3 использует компактный бинарный протокол (46 байт)
+// Остальные платы пока на JSON
+#ifndef BOARD_ESP32_C3_MUX
+  #include <ArduinoJson.h>
+#endif
 
 // ===== МУЛЬТИПЛЕКСОР =====
 #ifdef BOARD_ESP32_C3_MUX
@@ -230,7 +235,74 @@ void loop() {
   float trigVal = rawTrigger / 4095.0f;
   bool trigBtn = trigVal > 0.8f;
 
-  // === ФОРМИРОВАНИЕ JSON ===
+#ifdef BOARD_ESP32_C3_MUX
+  // === ФОРМИРОВАНИЕ БИНАРНОГО ПАКЕТА (UVRA Binary v1) ===
+  // Формат:
+  //   [0]      0x55 — magic byte
+  //   [1]      hand: 0=left, 1=right
+  //   [2..18]  MAC: 17 байт "XX:XX:XX:XX:XX:XX\0"
+  //   [19..28] raw flex: 5 × uint16_t LE — сырые значения АЦП
+  //   [29..38] norm flex: 5 × uint16_t LE (0..10000 → 0.0..1.0)
+  //   [39..42] joystick: 2 × int16_t LE (-10000..10000)
+  //   [43]     buttons: bitmask
+  //   [44..45] trigger: uint16_t LE (0..10000)
+  //   Итого: 46 байт (вместо ~400 JSON)
+
+  uint8_t packet[46];
+  int pos = 0;
+
+  packet[pos++] = 0x55; // magic
+
+  packet[pos++] = (strcmp(HAND, "left") == 0) ? 0 : 1; // hand
+
+  memcpy(&packet[pos], macAddress.c_str(), 17); // MAC
+  pos += 17;
+
+  for (int i = 0; i < 5; i++) { // raw flex (5 × uint16 LE)
+    uint16_t val = (uint16_t)constrain(rawFlex[i], 0, 4095);
+    packet[pos++] = val & 0xFF;
+    packet[pos++] = (val >> 8) & 0xFF;
+  }
+
+  for (int i = 0; i < 5; i++) { // norm flex (5 × uint16 LE, 0..10000)
+    uint16_t val = (uint16_t)(flex[i] * 10000.0f);
+    packet[pos++] = val & 0xFF;
+    packet[pos++] = (val >> 8) & 0xFF;
+  }
+
+  int16_t jxInt = (int16_t)(joyX * 10000.0f); // joystick X
+  packet[pos++] = jxInt & 0xFF;
+  packet[pos++] = (jxInt >> 8) & 0xFF;
+  int16_t jyInt = (int16_t)(joyY * 10000.0f); // joystick Y
+  packet[pos++] = jyInt & 0xFF;
+  packet[pos++] = (jyInt >> 8) & 0xFF;
+
+  // buttons bitmask
+  bool isGrab = flex[1] > 0.7f && flex[2] > 0.7f && flex[3] > 0.7f && flex[4] > 0.7f;
+  bool isPinch = flex[0] > 0.6f && flex[1] > 0.6f;
+  uint8_t btnMask = 0;
+  if (joyBtn)   btnMask |= 0x01;
+  if (trigBtn)  btnMask |= 0x02;
+  if (btnA)     btnMask |= 0x04;
+  if (btnB)     btnMask |= 0x08;
+  if (isGrab)   btnMask |= 0x10;
+  if (isPinch)  btnMask |= 0x20;
+  packet[pos++] = btnMask;
+
+  uint16_t trgInt = (uint16_t)(trigVal * 10000.0f); // trigger
+  packet[pos++] = trgInt & 0xFF;
+  packet[pos++] = (trgInt >> 8) & 0xFF;
+
+  // Отправка
+  if (udpData.beginPacket(serverIP, serverDataPort)) {
+    udpData.write(packet, 46);
+    if (!udpData.endPacket()) {
+      Serial.println("UDP send failed");
+    }
+  }
+
+#else
+  // === ФОРМИРОВАНИЕ JSON (ESP32 / ESP32-S3) ===
   StaticJsonDocument<768> doc;
   doc["hand"] = HAND;
   doc["mac"] = macAddress;
@@ -239,10 +311,7 @@ void loop() {
   const char* fingerNames[] = {"thumb", "index", "middle", "ring", "pinky"};
   for (int i = 0; i < 5; i++) {
     JsonArray arr = fingers.createNestedArray(fingerNames[i]);
-    arr.add(0.0f);
-    arr.add(flex[i]);
-    arr.add(flex[i]);
-    arr.add(i == 0 ? 0.0f : flex[i]);
+    arr.add(flex[i]); arr.add(flex[i]); arr.add(flex[i]); arr.add(flex[i]);
   }
 
   JsonArray splay = doc.createNestedArray("splay");
@@ -262,14 +331,10 @@ void loop() {
 
   doc["triggerValue"] = trigVal;
 
-  // Raw sensor data for calibration
   JsonArray raw = doc.createNestedArray("raw");
   for (int i = 0; i < 5; i++) raw.add(rawFlex[i]);
-  raw.add(rawJoyX);
-  raw.add(rawJoyY);
-  raw.add(rawTrigger);
+  raw.add(rawJoyX); raw.add(rawJoyY); raw.add(rawTrigger);
 
-  // === ОТПРАВКА ===
   char buffer[600];
   size_t len = serializeJson(doc, buffer, sizeof(buffer));
 
@@ -279,6 +344,7 @@ void loop() {
       Serial.printf("UDP send failed, len=%d\n", len);
     }
   }
+#endif
 
   delay(SEND_INTERVAL_MS);
 }

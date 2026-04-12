@@ -1,13 +1,23 @@
 #pragma once
 
-// ===== ВЫБОР ПЛАТЫ =====
-// Раскомментируйте одну из строк:
+// ===== PART 1: BOARD SELECTION =====
+// Uncomment exactly ONE board:
 
+//#define BOARD_ESP32          // JSON protocol (~400 bytes/packet)
+//#define BOARD_ESP32_S3       // JSON protocol (~400 bytes/packet)
+#define BOARD_ESP32_C3_MUX    // UVRA Binary v1 protocol (46 bytes/packet)
 
-//#define BOARD_ESP32
-//#define BOARD_ESP32_S3
-#define BOARD_ESP32_C3_MUX
-
+// ===== PROTOCOL DETAILS =====
+// ESP32/ESP32-S3: JSON over UDP (legacy, verbose, ~400 bytes)
+// ESP32-C3: UVRA Binary v1 (compact, 46 bytes):
+//   [0] 0x55 magic
+//   [1] hand (0=left,1=right)  
+//   [2..18] MAC address (17 bytes)
+//   [19..28] raw ADC flex (5×uint16, 0-4095)
+//   [29..38] normalized flex (5×uint16, 0-10000)
+//   [39..42] joystick X,Y (2×int16, -10000..10000)
+//   [43] button bitmask
+//   [44..45] trigger (uint16, 0-10000)
 
 // ===== НАСТРОЙКИ WiFi =====
 #define WIFI_SSID     "YOUR_WIFI_SSID"
