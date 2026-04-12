@@ -13,16 +13,24 @@
     for (int i = 0; i < 4; i++) {
       digitalWrite(MUX_SELECT_PINS[i], (channel >> i) & 1);
     }
-    delayMicroseconds(5); // время переключения мультиплексора
+    delayMicroseconds(100); // ждём переключение мультиплексора + заряд конденсатора АЦП
   }
 
   int muxAnalogRead(int channel) {
     muxSelectChannel(channel);
-    return analogRead(MUX_SIG_PIN);
+    analogRead(MUX_SIG_PIN); // холостое чтение 1
+    delayMicroseconds(100);
+    analogRead(MUX_SIG_PIN); // холостое чтение 2
+    delayMicroseconds(100);
+    return analogRead(MUX_SIG_PIN); // реальное чтение
   }
 
   bool muxDigitalRead(int channel) {
     muxSelectChannel(channel);
+    analogRead(MUX_SIG_PIN);
+    delayMicroseconds(100);
+    analogRead(MUX_SIG_PIN);
+    delayMicroseconds(100);
     return analogRead(MUX_SIG_PIN) < MUX_DIGITAL_THRESHOLD;
   }
 #endif
@@ -173,6 +181,10 @@ void loop() {
   btnA = muxDigitalRead(MUX_CH_BTN_A);
   btnB = muxDigitalRead(MUX_CH_BTN_B);
   rawTrigger = muxAnalogRead(MUX_CH_TRIGGER);
+
+  // DEBUG: сырые значения АЦП по каналам
+  Serial.printf("MUX RAW | joyX(c5):%d joyY(c6):%d joyBtn(c7):%d btnA(c8):%d btnB(c9):%d trg(c10):%d\n",
+    rawJoyX, rawJoyY, muxAnalogRead(MUX_CH_JOY_BTN), muxAnalogRead(MUX_CH_BTN_A), muxAnalogRead(MUX_CH_BTN_B), rawTrigger);
 #else
   // Прямое чтение с пинов
   for (int i = 0; i < 5; i++) {
