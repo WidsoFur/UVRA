@@ -128,6 +128,8 @@ void setup() {
 #endif
 
   // Подключение к WiFi
+  WiFi.setSleep(true);                  // включаем modem sleep — WiFi засыпает между пакетами
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);  // снижаем мощность передатчика (по умолчанию 20dBm)
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -137,6 +139,7 @@ void setup() {
   Serial.println();
   Serial.print("Connected! IP: ");
   Serial.println(WiFi.localIP());
+  Serial.print("TX power: 8.5 dBm, modem sleep: ON");
 
   macAddress = getMacAddress();
   Serial.print("MAC: ");
