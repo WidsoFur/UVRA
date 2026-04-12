@@ -42,10 +42,10 @@ class NamedPipeClient extends EventEmitter {
     this.writing = false;
     this.reconnectTimer = null;
 
-    // Calibration: per-finger min/max raw ADC values
+    // Calibration: per-finger min/max normalized values (0.0-1.0)
     this.calibration = {
-      min: [0, 0, 0, 0, 0],       // raw ADC min per finger (fully open)
-      max: [4095, 4095, 4095, 4095, 4095], // raw ADC max per finger (fully closed)
+      min: [0.0, 0.0, 0.0, 0.0, 0.0],     // min per finger (fully open)
+      max: [1.0, 1.0, 1.0, 1.0, 1.0],     // max per finger (fully closed)
     };
 
     // Calibration recording state
@@ -134,15 +134,17 @@ class NamedPipeClient extends EventEmitter {
   }
 
   /**
-   * Feed raw sensor values during calibration to track min/max.
-   * raw = [thumb, index, middle, ring, pinky, joyX, joyY, trigger] (8 ints)
+   * Feed normalized flexion values during calibration to track min/max.
+   * flexion = [[thumb], [index], [middle], [ring], [pinky]] (each with 4 joints)
    */
-  feedCalibrationData(raw) {
-    if (!this.calibrating || !raw || raw.length < 5) return;
+  feedCalibrationData(flexion) {
+    if (!this.calibrating || !flexion || flexion.length < 5) return;
     this.calibrationSampleCount++;
     for (let i = 0; i < 5; i++) {
-      if (raw[i] < this.calibrationSamples.min[i]) this.calibrationSamples.min[i] = raw[i];
-      if (raw[i] > this.calibrationSamples.max[i]) this.calibrationSamples.max[i] = raw[i];
+      // Use middle joint (index 1) as representative value
+      const val = flexion[i][1] || 0;
+      if (val < this.calibrationSamples.min[i]) this.calibrationSamples.min[i] = val;
+      if (val > this.calibrationSamples.max[i]) this.calibrationSamples.max[i] = val;
     }
     // Log every 100 samples
     if (this.calibrationSampleCount % 100 === 0) {
@@ -193,16 +195,16 @@ class NamedPipeClient extends EventEmitter {
   // ========== PROCESSING ==========
 
   /**
-   * Normalize a raw ADC value to 0.0–1.0 using per-finger calibration.
-   * Applies deadzone at edges.
+   * Apply calibration to normalized flexion values.
+   * Maps min/max range to 0.0-1.0 with deadzone.
    */
-  normalizeRaw(raw, fingerIndex) {
+  applyCalibration(normalizedVal, fingerIndex) {
     const min = this.calibration.min[fingerIndex];
     const max = this.calibration.max[fingerIndex];
     const range = max - min;
-    if (range <= 0) return 0;
+    if (range <= 0) return normalizedVal; // No calibration data, return original
 
-    let val = (raw - min) / range;
+    let val = (normalizedVal - min) / range;
     val = Math.max(0, Math.min(1, val));
 
     // Apply deadzone at edges
@@ -221,41 +223,25 @@ class NamedPipeClient extends EventEmitter {
   }
 
   /**
-   * Process incoming data: calibrate raw values, apply smoothing, then pack.
-   * If raw data is present, use it for calibration-aware normalization.
-   * Otherwise fall through to the original flexion values.
+   * Process incoming data: apply calibration, smoothing, then pack.
    */
   processData(data) {
-    const hasRaw = data.raw && data.raw.length >= 5;
-
     // Feed calibration if active
     if (this.calibrating) {
-      console.log(`[Calibration] processData called for ${this.hand}, hasRaw=${hasRaw}, raw=${JSON.stringify(data.raw)}`);
-    }
-    if (this.calibrating && hasRaw) {
-      this.feedCalibrationData(data.raw);
+      console.log(`[Calibration] processData called for ${this.hand}`);
+      this.feedCalibrationData(data.flexion);
     }
 
-    // Compute finger flexion from raw or use pre-normalized
+    // Apply calibration to finger flexion
     const flexion = [];
     for (let i = 0; i < 5; i++) {
-      let val;
-      if (hasRaw) {
-        val = this.normalizeRaw(data.raw[i], i);
-      } else {
-        // Fallback: use middle joint from firmware-normalized data
-        val = (data.flexion && data.flexion[i] && data.flexion[i][1]) || 0;
-      }
-
-      // Apply EMA smoothing
-      this.smoothed[i] = this.smooth(val, this.smoothed[i]);
-      val = this.smoothed[i];
-
-      // Build 4-joint array: [0, curl, curl, curl] for non-thumb, [0, curl, curl, 0] for thumb
+      // Use middle joint (index 1) as representative value
+      const normalizedVal = data.flexion[i][1] || 0;
+      const calibratedVal = this.applyCalibration(normalizedVal, i);
       if (i === 0) {
-        flexion.push([0, val, val, 0]);
+        flexion.push([0, calibratedVal, calibratedVal, 0]);
       } else {
-        flexion.push([0, val, val, val]);
+        flexion.push([0, calibratedVal, calibratedVal, calibratedVal]);
       }
     }
 
