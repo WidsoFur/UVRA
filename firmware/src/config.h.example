@@ -28,6 +28,13 @@
 
 #define HAND               "right"
 
+// ===== ПОДКЛЮЧЁННЫЕ КОМПОНЕНТЫ =====
+// Отключи то, что не подключено физически (false = не читать, отправлять нули)
+#define HAS_FINGERS        true
+#define HAS_JOYSTICK       false
+#define HAS_BUTTONS        false
+#define HAS_TRIGGER        false
+
 // ===== ИНВЕРСИЯ СТИКА =====
 #define INVERT_JOY_X       true
 #define INVERT_JOY_Y       false

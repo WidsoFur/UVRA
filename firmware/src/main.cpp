@@ -171,20 +171,35 @@ void loop() {
 
 #ifdef BOARD_ESP32_C3_MUX
   // Чтение через мультиплексор
-  for (int i = 0; i < 5; i++) {
-    rawFlex[i] = muxAnalogRead(MUX_FLEX_CH[i]);
-    flex[i] = mapFlex(rawFlex[i], flexMin[i], flexMax[i]);
-  }
-  rawJoyX = muxAnalogRead(MUX_CH_JOY_X);
-  rawJoyY = muxAnalogRead(MUX_CH_JOY_Y);
-  joyBtn = muxDigitalRead(MUX_CH_JOY_BTN);
-  btnA = muxDigitalRead(MUX_CH_BTN_A);
-  btnB = muxDigitalRead(MUX_CH_BTN_B);
-  rawTrigger = muxAnalogRead(MUX_CH_TRIGGER);
+  #if HAS_FINGERS
+    for (int i = 0; i < 5; i++) {
+      rawFlex[i] = muxAnalogRead(MUX_FLEX_CH[i]);
+      flex[i] = mapFlex(rawFlex[i], flexMin[i], flexMax[i]);
+    }
+  #else
+    for (int i = 0; i < 5; i++) { rawFlex[i] = 0; flex[i] = 0.0f; }
+  #endif
 
-  // DEBUG: сырые значения АЦП по каналам
-  Serial.printf("MUX RAW | joyX(c5):%d joyY(c6):%d joyBtn(c7):%d btnA(c8):%d btnB(c9):%d trg(c10):%d\n",
-    rawJoyX, rawJoyY, muxAnalogRead(MUX_CH_JOY_BTN), muxAnalogRead(MUX_CH_BTN_A), muxAnalogRead(MUX_CH_BTN_B), rawTrigger);
+  #if HAS_JOYSTICK
+    rawJoyX = muxAnalogRead(MUX_CH_JOY_X);
+    rawJoyY = muxAnalogRead(MUX_CH_JOY_Y);
+    joyBtn = muxDigitalRead(MUX_CH_JOY_BTN);
+  #else
+    rawJoyX = 2048; rawJoyY = 2048; joyBtn = false;
+  #endif
+
+  #if HAS_BUTTONS
+    btnA = muxDigitalRead(MUX_CH_BTN_A);
+    btnB = muxDigitalRead(MUX_CH_BTN_B);
+  #else
+    btnA = false; btnB = false;
+  #endif
+
+  #if HAS_TRIGGER
+    rawTrigger = muxAnalogRead(MUX_CH_TRIGGER);
+  #else
+    rawTrigger = 0;
+  #endif
 #else
   // Прямое чтение с пинов
   for (int i = 0; i < 5; i++) {
