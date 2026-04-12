@@ -152,7 +152,7 @@ function initServices() {
     // Debug: log raw values and calibration state periodically
     if (!pipe._debugCounter) pipe._debugCounter = 0;
     if (pipe._debugCounter++ % 500 === 0) {
-      appLogger.info(`[${data.hand}] raw=${JSON.stringify(data.raw)} cal_min=${JSON.stringify(pipe.calibration.min)} cal_max=${JSON.stringify(pipe.calibration.max)} calibrating=${pipe.calibrating}`);
+      appLogger.info(`[${data.hand}] pipe=${pipe.hand} raw=${JSON.stringify(data.raw)} hasRaw=${!!(data.raw && data.raw.length >= 5)} calibrating=${pipe.calibrating} connected=${pipe.connected}`);
     }
 
     pipe.sendData(data);

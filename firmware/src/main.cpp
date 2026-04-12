@@ -231,7 +231,7 @@ void loop() {
   bool trigBtn = trigVal > 0.8f;
 
   // === ФОРМИРОВАНИЕ JSON ===
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<768> doc;
   doc["hand"] = HAND;
   doc["mac"] = macAddress;
 
