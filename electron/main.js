@@ -5,7 +5,7 @@ const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
 const DeviceStore = require('./device-store');
-const { discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
+const { discoverDevices, discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
 const { appLogger, rawLogger } = require('./logger');
 
 let mainWindow;
@@ -398,7 +398,7 @@ function setupIPC() {
   // Tracking reference — discover SteamVR devices from vrserver log
   ipcMain.handle('tracking-get-devices', async () => {
     try {
-      const devices = discoverDevicesFromLog(appLogger);
+      const devices = await discoverDevices(appLogger);
       // Also check if the OpenGloves driver is reachable
       const driverSettings = await getDriverSettings();
       return {

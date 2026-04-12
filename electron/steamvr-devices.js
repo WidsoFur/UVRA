@@ -3,7 +3,80 @@ const path = require('path');
 const http = require('http');
 
 /**
+ * Discovers SteamVR tracked devices via the driver's HTTP API (GET /devices on port 52075).
+ * This is the preferred method — works reliably as long as the driver is loaded.
+ * Returns array of { id, serial, type, model, manufacturer, role, connected }
+ */
+function discoverDevicesFromAPI(logger) {
+  const log = logger || { info() {}, warn() {}, error() {} };
+
+  return new Promise((resolve) => {
+    const req = http.get({
+      hostname: '127.0.0.1',
+      port: 52075,
+      path: '/devices',
+      timeout: 3000,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const devices = JSON.parse(data);
+          log.info(`API: получено ${devices.length} устройств`);
+          // Add confirmed=true and filter out our own opengloves devices
+          const result = devices.map(d => ({
+            ...d,
+            confirmed: d.connected,
+            driver: d.manufacturer || 'unknown',
+          })).filter(d => {
+            // Skip our own UVRA/opengloves devices
+            const isOurs = (d.serial || '').startsWith('UVRA-') || (d.manufacturer || '').toLowerCase() === 'uvra';
+            if (isOurs) log.info(`  Пропускаю своё устройство: ${d.serial}`);
+            return !isOurs;
+          });
+          for (const d of result) {
+            log.info(`  [${d.id}] ${d.serial} | type=${d.type} model=${d.model} role=${d.role} connected=${d.connected}`);
+          }
+          resolve(result);
+        } catch (e) {
+          log.error(`API: ошибка парсинга ответа: ${e.message}`);
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', (err) => {
+      log.warn(`API: драйвер не отвечает (${err.message}), fallback на лог`);
+      resolve(null);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      log.warn('API: таймаут, fallback на лог');
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Main discovery function: tries API first, falls back to log parsing.
+ */
+async function discoverDevices(logger) {
+  const log = logger || { info() {}, warn() {}, error() {} };
+
+  // Try API first
+  const apiResult = await discoverDevicesFromAPI(log);
+  if (apiResult && apiResult.length > 0) {
+    log.info('Устройства получены через API драйвера');
+    return apiResult;
+  }
+
+  // Fallback to log parsing
+  log.info('Fallback: парсинг vrserver.txt');
+  return discoverDevicesFromLog(log);
+}
+
+/**
  * Discovers SteamVR tracked devices by parsing vrserver.txt log.
+ * FALLBACK method — used when driver API is not available.
  * Returns array of { id, serial, driver, type, model, manufacturer, role }
  */
 function discoverDevicesFromLog(logger) {
@@ -499,7 +572,9 @@ function deletePosePreset(name) {
 }
 
 module.exports = {
+  discoverDevices,
   discoverDevicesFromLog,
+  discoverDevicesFromAPI,
   getSteamVRLogPath,
   getVRSettingsPath,
   postTrackingReference,
