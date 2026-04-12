@@ -145,6 +145,8 @@ void setup() {
   // Запускаем UDP сокеты
   udpData.begin(UVRA_DATA_PORT + 1);     // локальный порт для отправки данных
   udpDiscovery.begin(UVRA_DISCOVERY_PORT); // для приёма ответов discovery
+
+  Serial.println("UDP sockets ready. Waiting for UVRA server...");
 }
 
 void loop() {
@@ -155,6 +157,9 @@ void loop() {
   if (!serverFound || (millis() - lastDiscovery > DISCOVERY_INTERVAL)) {
     sendDiscovery();
     lastDiscovery = millis();
+    if (!serverFound) {
+      Serial.println("Discovery sent, waiting for UVRA server...");
+    }
   }
 
   // Если сервер не найден, не отправляем данные
@@ -223,7 +228,7 @@ void loop() {
   bool trigBtn = trigVal > 0.8f;
 
   // === ФОРМИРОВАНИЕ JSON ===
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<512> doc;
   doc["hand"] = HAND;
   doc["mac"] = macAddress;
 
@@ -262,12 +267,15 @@ void loop() {
   raw.add(rawTrigger);
 
   // === ОТПРАВКА ===
-  char buffer[512];
+  char buffer[600];
   size_t len = serializeJson(doc, buffer, sizeof(buffer));
 
-  udpData.beginPacket(serverIP, serverDataPort);
-  udpData.write((uint8_t*)buffer, len);
-  udpData.endPacket();
+  if (udpData.beginPacket(serverIP, serverDataPort)) {
+    udpData.write((uint8_t*)buffer, len);
+    if (!udpData.endPacket()) {
+      Serial.printf("UDP send failed, len=%d\n", len);
+    }
+  }
 
   delay(SEND_INTERVAL_MS);
 }
