@@ -4,8 +4,9 @@
 // Раскомментируйте одну из строк:
 
 
-#define BOARD_ESP32
+//#define BOARD_ESP32
 //#define BOARD_ESP32_S3
+#define BOARD_ESP32_C3_MUX
 
 
 // ===== НАСТРОЙКИ WiFi =====
@@ -113,8 +114,62 @@
     #define TRIGGER_PIN      8
   #endif
 
+#elif defined(BOARD_ESP32_C3_MUX)
+  // ESP32-C3 Super Mini + CD74HC4067 мультиплексор
+  // Все аналоговые/цифровые входы через мультиплексор
+
+  // Пин сигнала мультиплексора (SIG)
+  #ifndef MUX_SIG_PIN
+    #define MUX_SIG_PIN      3
+  #endif
+  // Пины выбора канала (S0-S3)
+  #ifndef MUX_S0_PIN
+    #define MUX_S0_PIN       6
+  #endif
+  #ifndef MUX_S1_PIN
+    #define MUX_S1_PIN       7
+  #endif
+  #ifndef MUX_S2_PIN
+    #define MUX_S2_PIN       8
+  #endif
+  #ifndef MUX_S3_PIN
+    #define MUX_S3_PIN       10
+  #endif
+
+  // Каналы мультиплексора
+  #define MUX_CH_PINKY     0
+  #define MUX_CH_RING      1
+  #define MUX_CH_MIDDLE    2
+  #define MUX_CH_INDEX     3
+  #define MUX_CH_THUMB     4
+  #define MUX_CH_JOY_X     5
+  #define MUX_CH_JOY_Y     6
+  #define MUX_CH_JOY_BTN   7
+  #define MUX_CH_BTN_A     8
+  #define MUX_CH_BTN_B     9
+  #define MUX_CH_TRIGGER   10
+
+  // Порядок каналов пальцев: thumb, index, middle, ring, pinky
+  #define MUX_FLEX_CHANNELS { MUX_CH_THUMB, MUX_CH_INDEX, MUX_CH_MIDDLE, MUX_CH_RING, MUX_CH_PINKY }
+
+  // Пороги для цифровых входов через мультиплексор (кнопки подтянуты к VCC)
+  #define MUX_DIGITAL_THRESHOLD 2048
+
+  // Заглушки для совместимости (не используются в MUX режиме)
+  #define FLEX_THUMB_PIN   0
+  #define FLEX_INDEX_PIN   0
+  #define FLEX_MIDDLE_PIN  0
+  #define FLEX_RING_PIN    0
+  #define FLEX_PINKY_PIN   0
+  #define JOY_X_PIN        0
+  #define JOY_Y_PIN        0
+  #define JOY_BTN_PIN      0
+  #define BTN_A_PIN        0
+  #define BTN_B_PIN        0
+  #define TRIGGER_PIN      0
+
 #else
-  #error "Выберите плату: раскомментируйте BOARD_ESP32 или BOARD_ESP32_S3 в config.h"
+  #error "Выберите плату: раскомментируйте BOARD_ESP32, BOARD_ESP32_S3 или BOARD_ESP32_C3_MUX в config.h"
 #endif
 
 // ===== КАЛИБРОВКА =====

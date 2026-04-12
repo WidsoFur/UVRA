@@ -4,10 +4,35 @@
 #include <ArduinoJson.h>
 #include "config.h"
 
+// ===== МУЛЬТИПЛЕКСОР =====
+#ifdef BOARD_ESP32_C3_MUX
+  const int MUX_SELECT_PINS[4] = { MUX_S0_PIN, MUX_S1_PIN, MUX_S2_PIN, MUX_S3_PIN };
+  const int MUX_FLEX_CH[5] = MUX_FLEX_CHANNELS;
+
+  void muxSelectChannel(int channel) {
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(MUX_SELECT_PINS[i], (channel >> i) & 1);
+    }
+    delayMicroseconds(5); // время переключения мультиплексора
+  }
+
+  int muxAnalogRead(int channel) {
+    muxSelectChannel(channel);
+    return analogRead(MUX_SIG_PIN);
+  }
+
+  bool muxDigitalRead(int channel) {
+    muxSelectChannel(channel);
+    return analogRead(MUX_SIG_PIN) < MUX_DIGITAL_THRESHOLD;
+  }
+#endif
+
 // ===== ПИНЫ =====
-const int FLEX_PINS[5] = {
-  FLEX_THUMB_PIN, FLEX_INDEX_PIN, FLEX_MIDDLE_PIN, FLEX_RING_PIN, FLEX_PINKY_PIN
-};
+#ifndef BOARD_ESP32_C3_MUX
+  const int FLEX_PINS[5] = {
+    FLEX_THUMB_PIN, FLEX_INDEX_PIN, FLEX_MIDDLE_PIN, FLEX_RING_PIN, FLEX_PINKY_PIN
+  };
+#endif
 
 // ===== КАЛИБРОВКА =====
 int flexMin[5] = { FLEX_THUMB_MIN, FLEX_INDEX_MIN, FLEX_MIDDLE_MIN, FLEX_RING_MIN, FLEX_PINKY_MIN };
@@ -75,6 +100,14 @@ void setup() {
   Serial.begin(115200);
 
   // Настройка пинов
+#ifdef BOARD_ESP32_C3_MUX
+  // Мультиплексор: SIG как вход, S0-S3 как выходы
+  pinMode(MUX_SIG_PIN, INPUT);
+  for (int i = 0; i < 4; i++) {
+    pinMode(MUX_SELECT_PINS[i], OUTPUT);
+    digitalWrite(MUX_SELECT_PINS[i], LOW);
+  }
+#else
   for (int i = 0; i < 5; i++) {
     pinMode(FLEX_PINS[i], INPUT);
   }
@@ -84,6 +117,7 @@ void setup() {
   pinMode(BTN_A_PIN, INPUT_PULLUP);
   pinMode(BTN_B_PIN, INPUT_PULLUP);
   pinMode(TRIGGER_PIN, INPUT);
+#endif
 
   // Подключение к WiFi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -124,22 +158,40 @@ void loop() {
   // === ЧТЕНИЕ ДАТЧИКОВ ===
   int rawFlex[5];
   float flex[5];
+  int rawJoyX, rawJoyY, rawTrigger;
+  bool joyBtn, btnA, btnB;
+
+#ifdef BOARD_ESP32_C3_MUX
+  // Чтение через мультиплексор
+  for (int i = 0; i < 5; i++) {
+    rawFlex[i] = muxAnalogRead(MUX_FLEX_CH[i]);
+    flex[i] = mapFlex(rawFlex[i], flexMin[i], flexMax[i]);
+  }
+  rawJoyX = muxAnalogRead(MUX_CH_JOY_X);
+  rawJoyY = muxAnalogRead(MUX_CH_JOY_Y);
+  joyBtn = muxDigitalRead(MUX_CH_JOY_BTN);
+  btnA = muxDigitalRead(MUX_CH_BTN_A);
+  btnB = muxDigitalRead(MUX_CH_BTN_B);
+  rawTrigger = muxAnalogRead(MUX_CH_TRIGGER);
+#else
+  // Прямое чтение с пинов
   for (int i = 0; i < 5; i++) {
     rawFlex[i] = analogRead(FLEX_PINS[i]);
     flex[i] = mapFlex(rawFlex[i], flexMin[i], flexMax[i]);
   }
+  rawJoyX = analogRead(JOY_X_PIN);
+  rawJoyY = analogRead(JOY_Y_PIN);
+  joyBtn = !digitalRead(JOY_BTN_PIN);
+  btnA = !digitalRead(BTN_A_PIN);
+  btnB = !digitalRead(BTN_B_PIN);
+  rawTrigger = analogRead(TRIGGER_PIN);
+#endif
 
-  int rawJoyX = analogRead(JOY_X_PIN);
-  int rawJoyY = analogRead(JOY_Y_PIN);
   float joyX = (rawJoyX - 2048.0f) / 2048.0f;
   float joyY = (rawJoyY - 2048.0f) / 2048.0f;
   if (INVERT_JOY_X) joyX = -joyX;
   if (INVERT_JOY_Y) joyY = -joyY;
-  bool joyBtn = !digitalRead(JOY_BTN_PIN);
 
-  bool btnA = !digitalRead(BTN_A_PIN);
-  bool btnB = !digitalRead(BTN_B_PIN);
-  int rawTrigger = analogRead(TRIGGER_PIN);
   float trigVal = rawTrigger / 4095.0f;
   bool trigBtn = trigVal > 0.8f;
 
