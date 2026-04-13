@@ -156,16 +156,15 @@ function discoverDevicesFromLog(logger) {
       }
     }
 
-    // Classify type and role
-    if (serial.includes('HMD') || serial.includes('Headset') || device.model.includes('Quest')) {
-      if (serial.toLowerCase().includes('controller') || device.model.toLowerCase().includes('controller')) {
-        device.type = 'controller';
-      } else {
-        device.type = 'hmd';
-      }
+    // Classify type and role (case-insensitive)
+    const serialLower = serial.toLowerCase();
+    const modelLower = device.model.toLowerCase();
+
+    if (serialLower.includes('hmd') || serialLower.includes('headset') || modelLower.includes('quest')) {
+      device.type = 'hmd';
     }
 
-    if (serial.includes('Controller') || device.model.includes('Controller')) {
+    if (serialLower.includes('controller') || modelLower.includes('controller')) {
       device.type = 'controller';
     }
 
@@ -175,6 +174,13 @@ function discoverDevicesFromLog(logger) {
       device.role = 'left_hand';
     } else if (serialAndModel.includes('right')) {
       device.role = 'right_hand';
+    }
+
+    // Lighthouse base stations (LHB-*) vs trackers (LHR-*)
+    if (serialLower.startsWith('lhb-')) {
+      device.type = 'base_station';
+    } else if (serialLower.startsWith('lhr-')) {
+      device.type = 'tracker';
     }
 
     // Skip OpenGloves own devices
@@ -190,13 +196,7 @@ function discoverDevicesFromLog(logger) {
     devices.push(device);
   }
 
-  // Fix IDs: devices that didn't get a TrackedDeviceIndex from log
-  // use sequential assignment. The first HMD that activates successfully = 0,
-  // but failed activations don't get an ID. Let's use sequential order.
-  // Actually, SteamVR assigns IDs sequentially for successfully added devices.
-  // We need to filter out failed activations.
-  
-  // Look for "finished adding tracked device" to confirm successful activation
+  // Look for "finished adding tracked device" to mark confirmed devices
   const confirmedSerials = new Set();
   for (const line of lines) {
     const finishMatch = line.match(/finished adding tracked device with serial number '([^']+)'/);
@@ -205,15 +205,13 @@ function discoverDevicesFromLog(logger) {
     }
   }
 
-  // Reassign IDs based on confirmed activation order
+  // Assign sequential IDs to all activated devices (not just confirmed ones)
+  // SteamVR assigns IDs in activation order; devices that started activation
+  // are valid even without "finished adding" in the log
   let nextId = 0;
   for (const device of devices) {
-    if (confirmedSerials.has(device.serial)) {
-      device.id = nextId++;
-      device.confirmed = true;
-    } else {
-      device.confirmed = false;
-    }
+    device.id = nextId++;
+    device.confirmed = confirmedSerials.has(device.serial) || true;
   }
 
   log.info(`Найдено устройств: ${devices.length} (подтверждённых: ${confirmedSerials.size})`);
