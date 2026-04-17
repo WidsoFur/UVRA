@@ -232,6 +232,22 @@ void loop() {
   if (INVERT_JOY_X) joyX = -joyX;
   if (INVERT_JOY_Y) joyY = -joyY;
 
+  // Круговая дедзона: значения внутри радиуса JOYSTICK_DEADZONE обнуляются,
+  // вне — масштабируются так чтобы выход начинался с 0 у края дедзоны.
+  #if JOYSTICK_DEADZONE > 0.0f
+  {
+    float mag = sqrtf(joyX * joyX + joyY * joyY);
+    if (mag < JOYSTICK_DEADZONE) {
+      joyX = 0.0f;
+      joyY = 0.0f;
+    } else {
+      float scale = (mag - JOYSTICK_DEADZONE) / ((1.0f - JOYSTICK_DEADZONE) * mag);
+      joyX *= scale;
+      joyY *= scale;
+    }
+  }
+  #endif
+
   float trigVal = rawTrigger / 4095.0f;
   bool trigBtn = trigVal > 0.8f;
 
