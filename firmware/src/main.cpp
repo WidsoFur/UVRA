@@ -259,6 +259,7 @@ void loop() {
   #endif
 
   float trigVal = rawTrigger / 4095.0f;
+  if (INVERT_TRIGGER) trigVal = 1.0f - trigVal;
   bool trigBtn = trigVal > 0.8f;
 
 #ifdef BOARD_ESP32_C3_MUX

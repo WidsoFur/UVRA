@@ -134,6 +134,10 @@ class NamedPipeClient extends EventEmitter {
     // Deadzone: percentage of range to clamp at edges
     this.deadzone = 0.03; // 3%
 
+    // Flex gain: multiplier applied after calibration. 1.0 = no change,
+    // >1.0 = fingers bend "more" in VR (half bend → full), <1.0 = dampened.
+    this.flexGain = 1.0;
+
     // Dynamic calibration: slowly expand min/max range during use
     this.dynamicCalibration = true;
     this.dynamicRate = 0.002; // how fast to expand per sample (lower = slower, more stable)
@@ -314,6 +318,11 @@ class NamedPipeClient extends EventEmitter {
     else if (val > 1 - this.deadzone) val = 1;
     else val = (val - this.deadzone) / (1 - 2 * this.deadzone);
 
+    // Apply flex gain (sensitivity multiplier) and clamp back to [0, 1]
+    if (this.flexGain !== 1.0) {
+      val = Math.max(0, Math.min(1, val * this.flexGain));
+    }
+
     return val;
   }
 
@@ -485,6 +494,10 @@ class NamedPipeClient extends EventEmitter {
     this.deadzone = Math.max(0, Math.min(0.2, dz));
   }
 
+  setFlexGain(gain) {
+    this.flexGain = Math.max(0.1, Math.min(5.0, gain));
+  }
+
   setOneEuroParams(minCutoff, beta) {
     if (minCutoff != null) this.oneEuroMinCutoff = Math.max(0.01, Math.min(20.0, minCutoff));
     if (beta != null)      this.oneEuroBeta      = Math.max(0.0,  Math.min(1.0,  beta));
@@ -499,6 +512,7 @@ class NamedPipeClient extends EventEmitter {
       deadzone: this.deadzone,
       oneEuroMinCutoff: this.oneEuroMinCutoff,
       oneEuroBeta: this.oneEuroBeta,
+      flexGain: this.flexGain,
     };
   }
 
@@ -510,6 +524,7 @@ class NamedPipeClient extends EventEmitter {
     if (cal.oneEuroMinCutoff != null || cal.oneEuroBeta != null) {
       this.setOneEuroParams(cal.oneEuroMinCutoff, cal.oneEuroBeta);
     }
+    if (cal.flexGain != null) this.setFlexGain(cal.flexGain);
     this._saveCalibration();
   }
 
@@ -530,6 +545,7 @@ class NamedPipeClient extends EventEmitter {
         deadzone: this.deadzone,
         oneEuroMinCutoff: this.oneEuroMinCutoff,
         oneEuroBeta: this.oneEuroBeta,
+        flexGain: this.flexGain,
       };
       fs.writeFileSync(this._getCalibrationPath(), JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
@@ -549,6 +565,7 @@ class NamedPipeClient extends EventEmitter {
       if (data.oneEuroMinCutoff != null || data.oneEuroBeta != null) {
         this.setOneEuroParams(data.oneEuroMinCutoff, data.oneEuroBeta);
       }
+      if (data.flexGain != null) this.setFlexGain(data.flexGain);
     } catch (e) {
       // silent fail
     }

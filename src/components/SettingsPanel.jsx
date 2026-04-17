@@ -18,6 +18,7 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
   const [presets, setPresets] = useState({});
   const [selectedPreset, setSelectedPreset] = useState('');
   const [presetName, setPresetName] = useState('');
+  const [liveMode, setLiveMode] = useState(false);
 
   // Load saved devices on mount
   useEffect(() => {
@@ -136,16 +137,23 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
   const updateOffset = (hand, group, axis, value) => {
     const num = parseFloat(value);
     if (isNaN(num)) return;
-    setPoseOffsets(prev => ({
-      ...prev,
-      [hand]: {
-        ...prev[hand],
-        [group]: {
-          ...prev[hand][group],
-          [axis]: num,
+    setPoseOffsets(prev => {
+      const next = {
+        ...prev,
+        [hand]: {
+          ...prev[hand],
+          [group]: {
+            ...prev[hand][group],
+            [axis]: num,
+          },
         },
-      },
-    }));
+      };
+      // Live mode: push to running driver immediately (no file write).
+      if (liveMode && window.uvra?.poseOffsetsPushLive) {
+        window.uvra.poseOffsetsPushLive(next);
+      }
+      return next;
+    });
   };
 
   const handleSaveOffsets = async () => {
@@ -408,6 +416,18 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
               <h2 className="text-sm font-semibold text-uvra-text">Оффсеты позиции</h2>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setLiveMode(v => !v)}
+                disabled={!poseOffsets}
+                title="В этом режиме изменения мгновенно применяются к драйверу, но не записываются в файл. Нажмите «Сохранить» для записи."
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                  liveMode
+                    ? 'bg-uvra-success/20 text-uvra-success ring-1 ring-uvra-success/40 animate-pulse'
+                    : 'bg-uvra-border/50 text-uvra-text-dim hover:bg-uvra-border'
+                }`}
+              >
+                {liveMode ? '● Позиционирование: ВКЛ' : '○ Позиционирование'}
+              </button>
               {offsetSaveStatus && (
                 <span className={`text-[10px] px-2 py-0.5 rounded-full ${
                   offsetSaveStatus.type === 'success'

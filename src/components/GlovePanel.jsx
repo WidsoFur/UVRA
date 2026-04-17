@@ -13,6 +13,7 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
   const [showSettings, setShowSettings] = useState(false);
   const [smoothing, setSmoothing] = useState(0.4);
   const [deadzone, setDeadzone] = useState(0.03);
+  const [flexGain, setFlexGain] = useState(1.0);
 
   // Load calibration settings on mount
   useEffect(() => {
@@ -21,6 +22,7 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
       if (result.success) {
         setSmoothing(result.calibration.smoothingAlpha);
         setDeadzone(result.calibration.deadzone);
+        if (result.calibration.flexGain != null) setFlexGain(result.calibration.flexGain);
       }
     });
   }, [hand]);
@@ -35,6 +37,12 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
     const dz = parseFloat(val);
     setDeadzone(dz);
     if (window.uvra) window.uvra.deadzoneSet(hand, dz);
+  };
+
+  const handleFlexGainChange = (val) => {
+    const g = parseFloat(val);
+    setFlexGain(g);
+    if (window.uvra) window.uvra.flexGainSet(hand, g);
   };
 
   const avgCurl = data.flexion
@@ -153,6 +161,25 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
               onChange={(e) => handleDeadzoneChange(e.target.value)}
               className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
             />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-uvra-text-dim">Сила сжатия</span>
+              <span className="text-[10px] text-uvra-accent font-mono">×{flexGain.toFixed(2)}</span>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="3.0"
+              step="0.05"
+              value={flexGain}
+              onChange={(e) => handleFlexGainChange(e.target.value)}
+              className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
+            />
+            <div className="flex justify-between text-[9px] text-uvra-text-dim mt-0.5">
+              <span>Слабее</span>
+              <span>Сильнее</span>
+            </div>
           </div>
         </div>
       )}

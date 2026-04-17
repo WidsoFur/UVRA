@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('uvra', {
   calibrationSet: (hand, calibration) => ipcRenderer.invoke('calibration-set', { hand, calibration }),
   smoothingSet: (hand, alpha) => ipcRenderer.invoke('smoothing-set', { hand, alpha }),
   deadzoneSet: (hand, deadzone) => ipcRenderer.invoke('deadzone-set', { hand, deadzone }),
+  flexGainSet: (hand, gain) => ipcRenderer.invoke('flex-gain-set', { hand, gain }),
+  oneEuroSet: (hand, minCutoff, beta) => ipcRenderer.invoke('one-euro-set', { hand, minCutoff, beta }),
   onCalibrationStart: (callback) => {
     const listener = (_, info) => callback(info);
     ipcRenderer.on('calibration-start', listener);
@@ -93,6 +95,7 @@ contextBridge.exposeInMainWorld('uvra', {
   // Pose offsets
   poseOffsetsGet: () => ipcRenderer.invoke('pose-offsets-get'),
   poseOffsetsSet: (offsets) => ipcRenderer.invoke('pose-offsets-set', offsets),
+  poseOffsetsPushLive: (offsets) => ipcRenderer.invoke('pose-offsets-push-live', offsets),
 
   // Pose presets
   posePresetsList: () => ipcRenderer.invoke('pose-presets-list'),

@@ -8,10 +8,12 @@ if (!fs.existsSync(LOGS_DIR)) {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
 }
 
-// Max log file size before rotation (5 MB)
-const MAX_LOG_SIZE = 5 * 1024 * 1024;
-// Max raw data log size (10 MB — raw data is verbose)
-const MAX_RAW_SIZE = 10 * 1024 * 1024;
+// Max log file size before rotation (2 MB)
+const MAX_LOG_SIZE = 2 * 1024 * 1024;
+// Max raw data log size (3 MB — raw data is verbose)
+const MAX_RAW_SIZE = 3 * 1024 * 1024;
+// Keep this many rotated copies per log
+const KEEP_ROTATED = 2;
 
 function getTimestamp() {
   return new Date().toISOString();
@@ -34,7 +36,7 @@ function rotateIfNeeded(filepath, maxSize) {
         .filter(f => f.startsWith(prefix) && f !== path.basename(filepath))
         .sort()
         .reverse();
-      for (let i = 3; i < files.length; i++) {
+      for (let i = KEEP_ROTATED; i < files.length; i++) {
         try { fs.unlinkSync(path.join(dir, files[i])); } catch (e) {}
       }
     }
@@ -89,9 +91,12 @@ class RawDataLogger {
   constructor() {
     this.filepath = path.join(LOGS_DIR, 'raw_data.log');
     this._stream = null;
-    this._enabled = true;
+    // Raw logging OFF by default — only useful for calibration/debug.
+    // Enable via IPC 'raw-log-set-enabled'.
+    this._enabled = false;
     this._sampleCount = 0;
-    this._logEveryN = 1; // log every Nth packet (1 = all)
+    // Log every 100th packet (~1 Hz at 100 Hz input) when enabled.
+    this._logEveryN = 100;
     this._open();
   }
 

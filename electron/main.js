@@ -5,7 +5,7 @@ const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
 const DeviceStore = require('./device-store');
-const { discoverDevices, discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
+const { discoverDevices, discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, pushPoseOffsetsToDriver, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
 const { appLogger, rawLogger } = require('./logger');
 
 let mainWindow;
@@ -146,10 +146,10 @@ function initServices() {
 
     const pipe = data.hand === 'left' ? leftPipe : rightPipe;
 
-    // Debug: log raw values and calibration state periodically
+    // Debug heartbeat: one short line every ~50s (500 × 0.1s × ~1 hand).
     if (!pipe._debugCounter) pipe._debugCounter = 0;
-    if (pipe._debugCounter++ % 500 === 0) {
-      appLogger.info(`[${data.hand}] pipe=${pipe.hand} raw=${JSON.stringify(data.raw)} hasRaw=${!!(data.raw && data.raw.length >= 5)} calibrating=${pipe.calibrating} connected=${pipe.connected}`);
+    if (pipe._debugCounter++ % 5000 === 0) {
+      appLogger.debug(`[${data.hand}] pipe connected=${pipe.connected} calibrating=${pipe.calibrating}`);
     }
 
     pipe.sendData(data);
@@ -290,12 +290,40 @@ function setupIPC() {
     return { success: true };
   });
 
+  ipcMain.handle('flex-gain-set', (_, { hand, gain }) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    pipe.setFlexGain(gain);
+    pipe._saveCalibration();
+    return { success: true, gain: pipe.flexGain };
+  });
+
   ipcMain.handle('one-euro-set', (_, { hand, minCutoff, beta }) => {
     const pipe = hand === 'left' ? leftPipe : rightPipe;
     if (!pipe) return { success: false };
     pipe.setOneEuroParams(minCutoff, beta);
     pipe._saveCalibration();
     return { success: true };
+  });
+
+  // Raw data log controls — off by default to keep disk usage low.
+  ipcMain.handle('raw-log-set-enabled', (_, { enabled }) => {
+    rawLogger.setEnabled(!!enabled);
+    appLogger.info(`Raw data logging ${enabled ? 'enabled' : 'disabled'}`);
+    return { success: true, enabled: !!enabled };
+  });
+
+  ipcMain.handle('raw-log-set-rate', (_, { everyN }) => {
+    rawLogger.setSampleRate(everyN);
+    appLogger.info(`Raw data log rate: every ${everyN} packets`);
+    return { success: true };
+  });
+
+  ipcMain.handle('raw-log-get-status', () => {
+    return {
+      enabled: rawLogger._enabled,
+      everyN: rawLogger._logEveryN,
+    };
   });
 
   // Driver management IPC
@@ -463,6 +491,18 @@ function setupIPC() {
     try {
       const result = await writePoseOffsets(offsets);
       return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Live positioning: push offsets to running driver WITHOUT writing to disk.
+  // Used by the "Режим позиционирования" toggle to preview offset changes in
+  // real time without persisting them until the user hits "Сохранить".
+  ipcMain.handle('pose-offsets-push-live', async (_, offsets) => {
+    try {
+      const result = await pushPoseOffsetsToDriver(offsets);
+      return { success: result.success };
     } catch (err) {
       return { success: false, error: err.message };
     }

@@ -580,6 +580,7 @@ module.exports = {
   getDriverSettings,
   readPoseOffsets,
   writePoseOffsets,
+  pushPoseOffsetsToDriver,
   loadPosePresets,
   savePosePreset,
   deletePosePreset,
