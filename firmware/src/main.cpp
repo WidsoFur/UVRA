@@ -27,7 +27,12 @@
     delayMicroseconds(100);
     analogRead(MUX_SIG_PIN); // холостое чтение 2
     delayMicroseconds(100);
-    return analogRead(MUX_SIG_PIN); // реальное чтение
+    // Оверсэмплинг: усредняем N сэмплов для снижения шума АЦП
+    uint32_t sum = 0;
+    for (int i = 0; i < ADC_OVERSAMPLES; i++) {
+      sum += analogRead(MUX_SIG_PIN);
+    }
+    return sum / ADC_OVERSAMPLES;
   }
 
   bool muxDigitalRead(int channel) {
@@ -214,17 +219,22 @@ void loop() {
     rawTrigger = 0;
   #endif
 #else
-  // Прямое чтение с пинов
+  // Прямое чтение с пинов с оверсэмплингом
+  auto oversampledRead = [](int pin) -> int {
+    uint32_t sum = 0;
+    for (int i = 0; i < ADC_OVERSAMPLES; i++) sum += analogRead(pin);
+    return sum / ADC_OVERSAMPLES;
+  };
   for (int i = 0; i < 5; i++) {
-    rawFlex[i] = analogRead(FLEX_PINS[i]);
+    rawFlex[i] = oversampledRead(FLEX_PINS[i]);
     flex[i] = mapFlex(rawFlex[i], flexMin[i], flexMax[i]);
   }
-  rawJoyX = analogRead(JOY_X_PIN);
-  rawJoyY = analogRead(JOY_Y_PIN);
+  rawJoyX = oversampledRead(JOY_X_PIN);
+  rawJoyY = oversampledRead(JOY_Y_PIN);
   joyBtn = !digitalRead(JOY_BTN_PIN);
   btnA = !digitalRead(BTN_A_PIN);
   btnB = !digitalRead(BTN_B_PIN);
-  rawTrigger = analogRead(TRIGGER_PIN);
+  rawTrigger = oversampledRead(TRIGGER_PIN);
 #endif
 
   float joyX = (rawJoyX - 2048.0f) / 2048.0f;

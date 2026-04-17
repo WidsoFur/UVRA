@@ -290,6 +290,14 @@ function setupIPC() {
     return { success: true };
   });
 
+  ipcMain.handle('one-euro-set', (_, { hand, minCutoff, beta }) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    pipe.setOneEuroParams(minCutoff, beta);
+    pipe._saveCalibration();
+    return { success: true };
+  });
+
   // Driver management IPC
   ipcMain.handle('driver-get-status', () => {
     return driverManager ? driverManager.getStatus() : { status: 'unknown' };

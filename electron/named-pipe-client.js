@@ -6,6 +6,68 @@ const path = require('path');
 const FINGER_NAMES = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 
 /**
+ * One Euro Filter — adaptive low-pass for noisy human input.
+ * Smooths hard when signal is still (removes jitter), smooths less when signal
+ * moves fast (preserves responsiveness). Designed for VR / hand tracking.
+ *
+ * Paper: Casiez et al., CHI 2012 — "1€ Filter"
+ *
+ * Params:
+ *   minCutoff — base cutoff freq in Hz. Lower = more smoothing at rest.
+ *   beta      — speed coefficient. Higher = more responsive to fast motion.
+ *   dCutoff   — cutoff for derivative (usually 1.0).
+ */
+class OneEuroFilter {
+  constructor(minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.xPrev = null;
+    this.dxPrev = 0;
+    this.tPrev = null;
+  }
+
+  _alpha(cutoff, dt) {
+    const tau = 1.0 / (2 * Math.PI * cutoff);
+    return 1.0 / (1.0 + tau / dt);
+  }
+
+  filter(x, tNow) {
+    if (this.xPrev === null) {
+      this.xPrev = x;
+      this.tPrev = tNow;
+      return x;
+    }
+    const dt = Math.max(1e-6, (tNow - this.tPrev) / 1000); // seconds
+    this.tPrev = tNow;
+
+    // Estimate derivative and low-pass it
+    const dx = (x - this.xPrev) / dt;
+    const aD = this._alpha(this.dCutoff, dt);
+    const dxHat = aD * dx + (1 - aD) * this.dxPrev;
+    this.dxPrev = dxHat;
+
+    // Adaptive cutoff: grows with |derivative|
+    const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+    const a = this._alpha(cutoff, dt);
+    const xHat = a * x + (1 - a) * this.xPrev;
+    this.xPrev = xHat;
+    return xHat;
+  }
+
+  setParams(minCutoff, beta) {
+    if (minCutoff != null) this.minCutoff = minCutoff;
+    if (beta != null) this.beta = beta;
+  }
+
+  reset() {
+    this.xPrev = null;
+    this.dxPrev = 0;
+    this.tPrev = null;
+  }
+}
+
+/**
  * Named Pipe client for OpenGloves driver communication.
  * 
  * Writes to: \\.\pipe\uvra\input\glove\v2\<left/right>
@@ -54,11 +116,20 @@ class NamedPipeClient extends EventEmitter {
     this.calibrationDuration = 10000; // ms
     this.calibrationSamples = { min: [Infinity, Infinity, Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity] };
 
-    // Smoothing: EMA (Exponential Moving Average)
+    // Smoothing: EMA (Exponential Moving Average) — used for joystick
     this.smoothingAlpha = 0.4; // 0.0 = max smooth, 1.0 = no smooth
-    this.smoothed = [0, 0, 0, 0, 0]; // current smoothed values per finger
+    this.smoothed = [0, 0, 0, 0, 0]; // legacy EMA state per finger (unused if One Euro active)
     this.smoothedJoyX = 0;
     this.smoothedJoyY = 0;
+
+    // One Euro Filter for fingers — adaptive smoothing (removes jitter at rest,
+    // stays responsive during fast bending). Per-finger state.
+    this.oneEuroMinCutoff = 1.0;  // Hz — lower = stronger smoothing at rest
+    this.oneEuroBeta      = 0.007; // higher = more responsive to speed
+    this.fingerFilters = [];
+    for (let i = 0; i < 5; i++) {
+      this.fingerFilters.push(new OneEuroFilter(this.oneEuroMinCutoff, this.oneEuroBeta));
+    }
 
     // Deadzone: percentage of range to clamp at edges
     this.deadzone = 0.03; // 3%
@@ -293,7 +364,8 @@ class NamedPipeClient extends EventEmitter {
       this.feedCalibrationData(data.flexion);
     }
 
-    // Apply calibration + EMA smoothing to finger flexion
+    // Apply calibration + One Euro filter to finger flexion
+    const now = Date.now();
     const flexion = [];
     for (let i = 0; i < 5; i++) {
       const normalizedVal = data.flexion[i][1] || 0;
@@ -302,8 +374,8 @@ class NamedPipeClient extends EventEmitter {
       this._dynamicCalibrate(i, normalizedVal);
 
       const calibratedVal = this.applyCalibration(normalizedVal, i);
-      this.smoothed[i] = this.smooth(calibratedVal, this.smoothed[i]);
-      const val = this.smoothed[i];
+      const val = this.fingerFilters[i].filter(calibratedVal, now);
+      this.smoothed[i] = val; // keep for UI/debug parity
       flexion.push([val, val, val, val]);
     }
 
@@ -413,12 +485,20 @@ class NamedPipeClient extends EventEmitter {
     this.deadzone = Math.max(0, Math.min(0.2, dz));
   }
 
+  setOneEuroParams(minCutoff, beta) {
+    if (minCutoff != null) this.oneEuroMinCutoff = Math.max(0.01, Math.min(20.0, minCutoff));
+    if (beta != null)      this.oneEuroBeta      = Math.max(0.0,  Math.min(1.0,  beta));
+    for (const f of this.fingerFilters) f.setParams(this.oneEuroMinCutoff, this.oneEuroBeta);
+  }
+
   getCalibration() {
     return {
       min: [...this.calibration.min],
       max: [...this.calibration.max],
       smoothingAlpha: this.smoothingAlpha,
       deadzone: this.deadzone,
+      oneEuroMinCutoff: this.oneEuroMinCutoff,
+      oneEuroBeta: this.oneEuroBeta,
     };
   }
 
@@ -427,6 +507,9 @@ class NamedPipeClient extends EventEmitter {
     if (cal.max) this.calibration.max = [...cal.max];
     if (cal.smoothingAlpha != null) this.smoothingAlpha = cal.smoothingAlpha;
     if (cal.deadzone != null) this.deadzone = cal.deadzone;
+    if (cal.oneEuroMinCutoff != null || cal.oneEuroBeta != null) {
+      this.setOneEuroParams(cal.oneEuroMinCutoff, cal.oneEuroBeta);
+    }
     this._saveCalibration();
   }
 
@@ -445,6 +528,8 @@ class NamedPipeClient extends EventEmitter {
         max: this.calibration.max,
         smoothingAlpha: this.smoothingAlpha,
         deadzone: this.deadzone,
+        oneEuroMinCutoff: this.oneEuroMinCutoff,
+        oneEuroBeta: this.oneEuroBeta,
       };
       fs.writeFileSync(this._getCalibrationPath(), JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
@@ -461,6 +546,9 @@ class NamedPipeClient extends EventEmitter {
       if (data.max) this.calibration.max = data.max;
       if (data.smoothingAlpha != null) this.smoothingAlpha = data.smoothingAlpha;
       if (data.deadzone != null) this.deadzone = data.deadzone;
+      if (data.oneEuroMinCutoff != null || data.oneEuroBeta != null) {
+        this.setOneEuroParams(data.oneEuroMinCutoff, data.oneEuroBeta);
+      }
     } catch (e) {
       // silent fail
     }
