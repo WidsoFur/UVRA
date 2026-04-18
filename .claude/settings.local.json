@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xxd)",
+      "Bash(sed -i 's/$/\\\\r/' collect_logs.bat)",
+      "Read(//c/c/Users/Kartoshka/Desktop/UVRA/tools/**)",
+      "Bash(awk '/\\\\r\\\\r$/{print NR\": double CR\"}' collect_logs.bat)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
