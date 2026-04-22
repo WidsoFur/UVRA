@@ -379,13 +379,108 @@ function getDriverSettings() {
 /**
  * Path to the OpenGloves default.vrsettings file.
  */
+/**
+ * Quick probe: is the OpenGloves driver currently loaded by SteamVR?
+ * Detected by whether its HTTP control server on 52075 responds.
+ * Used to decide whether writing to default.vrsettings is safe — SteamVR
+ * reacts badly to the settings file being rewritten while it has the
+ * driver loaded (can hang / crash vrserver).
+ */
+function isDriverRunning(timeoutMs = 400) {
+  return new Promise((resolve) => {
+    const req = http.get({
+      hostname: '127.0.0.1',
+      port: 52075,
+      path: '/devices',
+      timeout: timeoutMs,
+    }, (res) => {
+      res.resume();
+      resolve(true);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+/**
+ * Project-local data directory — always user-writable. Used as the primary
+ * store for pose offsets and presets so saving never fails even when the
+ * driver's default.vrsettings is in Program Files (admin-only).
+ */
+function getLocalDataDir() {
+  const dir = path.join(__dirname, '..', 'data');
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (e) { /* caller will handle */ }
+  return dir;
+}
+
+function getLocalOffsetsPath() {
+  return path.join(getLocalDataDir(), 'pose_offsets.json');
+}
+
+function getLocalPresetsPath() {
+  return path.join(getLocalDataDir(), 'pose_presets.json');
+}
+
 function getVRSettingsPath() {
-  const candidates = [
-    path.join(__dirname, '..', 'opengloves', 'resources', 'settings', 'default.vrsettings'),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+  const candidates = [];
+
+  // 1) Driver roots registered in openvrpaths.vrpath (external_drivers)
+  try {
+    const vrpath = path.join(process.env.LOCALAPPDATA || '', 'openvr', 'openvrpaths.vrpath');
+    if (fs.existsSync(vrpath)) {
+      const vp = JSON.parse(fs.readFileSync(vrpath, 'utf8'));
+
+      if (Array.isArray(vp.external_drivers)) {
+        for (const ext of vp.external_drivers) {
+          if (ext) candidates.push(path.join(ext, 'resources', 'settings', 'default.vrsettings'));
+        }
+      }
+
+      // 2) SteamVR runtime drivers/opengloves
+      if (Array.isArray(vp.runtime)) {
+        for (const rt of vp.runtime) {
+          if (rt) candidates.push(path.join(rt, 'drivers', 'opengloves', 'resources', 'settings', 'default.vrsettings'));
+        }
+      }
+
+      // 3) Steam's own install tree near logs[0]
+      if (Array.isArray(vp.log)) {
+        for (const lg of vp.log) {
+          if (!lg) continue;
+          const steamRoot = path.dirname(lg);
+          candidates.push(path.join(steamRoot, 'steamapps', 'common', 'SteamVR', 'drivers', 'opengloves', 'resources', 'settings', 'default.vrsettings'));
+        }
+      }
+    }
+  } catch (e) {
+    // fall through to static fallbacks
   }
+
+  // 4) Common install paths
+  const commonRoots = [
+    'C:\\Program Files (x86)\\Steam',
+    'C:\\Program Files\\Steam',
+    'D:\\Steam',
+    'E:\\Steam',
+  ];
+  for (const root of commonRoots) {
+    candidates.push(path.join(root, 'steamapps', 'common', 'SteamVR', 'drivers', 'opengloves', 'resources', 'settings', 'default.vrsettings'));
+  }
+
+  // 5) Project-local fallback (dev / bundled copy)
+  candidates.push(path.join(__dirname, '..', 'opengloves', 'resources', 'settings', 'default.vrsettings'));
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        console.log(`[pose-offsets] using vrsettings: ${p}`);
+        return p;
+      }
+    } catch (e) { /* skip */ }
+  }
+  console.warn('[pose-offsets] no vrsettings found in any candidate location');
   return null;
 }
 
@@ -394,6 +489,16 @@ function getVRSettingsPath() {
  * Returns { left: { pos: {x,y,z}, rot: {x,y,z} }, right: { pos: {x,y,z}, rot: {x,y,z} } }
  */
 function readPoseOffsets() {
+  // 1) Prefer local cached copy — guaranteed writable, survives driver reinstall.
+  try {
+    const localPath = getLocalOffsetsPath();
+    if (fs.existsSync(localPath)) {
+      const cached = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+      if (cached && cached.left && cached.right) return cached;
+    }
+  } catch (e) { /* fall through */ }
+
+  // 2) Fall back to the driver's vrsettings if no local cache.
   const settingsPath = getVRSettingsPath();
   if (!settingsPath) return null;
 
@@ -438,38 +543,96 @@ function readPoseOffsets() {
  * @param {{ left: { pos: {x,y,z}, rot: {x,y,z} }, right: { pos: {x,y,z}, rot: {x,y,z} } }} offsets
  */
 async function writePoseOffsets(offsets) {
-  const settingsPath = getVRSettingsPath();
-  if (!settingsPath) return { success: false, error: 'vrsettings not found' };
-
+  // 1) Always save to local cache first — this must never fail.
+  let localSaved = false;
+  let localError = null;
   try {
-    // Read, update, write back
-    const raw = fs.readFileSync(settingsPath, 'utf8');
-    const settings = JSON.parse(raw);
-    if (!settings.pose_settings) settings.pose_settings = {};
-    const ps = settings.pose_settings;
-
-    ps.left_x_offset_position = offsets.left.pos.x;
-    ps.left_y_offset_position = offsets.left.pos.y;
-    ps.left_z_offset_position = offsets.left.pos.z;
-    ps.left_x_offset_degrees = offsets.left.rot.x;
-    ps.left_y_offset_degrees = offsets.left.rot.y;
-    ps.left_z_offset_degrees = offsets.left.rot.z;
-
-    ps.right_x_offset_position = offsets.right.pos.x;
-    ps.right_y_offset_position = offsets.right.pos.y;
-    ps.right_z_offset_position = offsets.right.pos.z;
-    ps.right_x_offset_degrees = offsets.right.rot.x;
-    ps.right_y_offset_degrees = offsets.right.rot.y;
-    ps.right_z_offset_degrees = offsets.right.rot.z;
-
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-
-    // Also push to running driver via external server (port 52075)
-    const driverResult = await pushPoseOffsetsToDriver(offsets);
-
-    return { success: true, fileSaved: true, driverUpdated: driverResult.success };
+    fs.writeFileSync(getLocalOffsetsPath(), JSON.stringify(offsets, null, 2), 'utf8');
+    localSaved = true;
   } catch (e) {
-    return { success: false, error: e.message };
+    localError = e.message;
+  }
+
+  // 2) Best-effort: mirror into the driver's default.vrsettings so settings
+  //    persist across SteamVR restarts even without our loader running.
+  //    Skipped while SteamVR/driver is running — rewriting the live settings
+  //    file has been observed to crash vrserver. In that case the running
+  //    driver is updated via HTTP (step 3) and the file mirror happens on
+  //    the next save when SteamVR is off.
+  let vrsettingsSaved = false;
+  let vrsettingsError = null;
+  let vrsettingsSkipped = false;
+  const driverLive = await isDriverRunning();
+  try {
+    if (driverLive) {
+      vrsettingsSkipped = true;
+      vrsettingsError = 'skipped: driver is running';
+    } else {
+    const settingsPath = getVRSettingsPath();
+    if (settingsPath) {
+      const raw = fs.readFileSync(settingsPath, 'utf8');
+      const settings = JSON.parse(raw);
+      if (!settings.pose_settings) settings.pose_settings = {};
+      const ps = settings.pose_settings;
+
+      ps.left_x_offset_position = offsets.left.pos.x;
+      ps.left_y_offset_position = offsets.left.pos.y;
+      ps.left_z_offset_position = offsets.left.pos.z;
+      ps.left_x_offset_degrees  = offsets.left.rot.x;
+      ps.left_y_offset_degrees  = offsets.left.rot.y;
+      ps.left_z_offset_degrees  = offsets.left.rot.z;
+
+      ps.right_x_offset_position = offsets.right.pos.x;
+      ps.right_y_offset_position = offsets.right.pos.y;
+      ps.right_z_offset_position = offsets.right.pos.z;
+      ps.right_x_offset_degrees  = offsets.right.rot.x;
+      ps.right_y_offset_degrees  = offsets.right.rot.y;
+      ps.right_z_offset_degrees  = offsets.right.rot.z;
+
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+      vrsettingsSaved = true;
+    }
+    }
+  } catch (e) {
+    vrsettingsError = e.message;
+  }
+
+  // 3) Push to the running driver so changes apply immediately.
+  const driverResult = await pushPoseOffsetsToDriver(offsets);
+
+  // Overall success = we saved SOMEWHERE we can read back.
+  if (!localSaved && !vrsettingsSaved && !vrsettingsSkipped) {
+    return {
+      success: false,
+      error: `local: ${localError || 'n/a'}; vrsettings: ${vrsettingsError || 'not found'}`,
+    };
+  }
+
+  return {
+    success: true,
+    fileSaved: localSaved,
+    vrsettingsSaved,
+    vrsettingsSkipped,
+    vrsettingsError,
+    driverUpdated: driverResult.success,
+  };
+}
+
+/**
+ * Apply the last-saved local pose offsets to the running driver (if any).
+ * Called on app startup so the user's saved positioning is restored without
+ * needing to open the settings panel.
+ */
+async function applyLocalPoseOffsets() {
+  try {
+    const localPath = getLocalOffsetsPath();
+    if (!fs.existsSync(localPath)) return { success: false, reason: 'no-local-file' };
+    const offsets = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+    if (!offsets?.left || !offsets?.right) return { success: false, reason: 'invalid-format' };
+    const r = await pushPoseOffsetsToDriver(offsets);
+    return { success: r.success, offsets };
+  } catch (e) {
+    return { success: false, reason: e.message };
   }
 }
 
@@ -514,41 +677,32 @@ function pushPoseOffsetsToDriver(offsets) {
 }
 
 /**
- * Path to the pose presets JSON file (stored alongside default.vrsettings).
- */
-function getPresetsPath() {
-  const settingsDir = getVRSettingsPath();
-  if (!settingsDir) return null;
-  return path.join(path.dirname(settingsDir), 'pose_presets.json');
-}
-
-/**
- * Load all pose presets.
- * Returns { presets: { [name]: { left: {pos,rot}, right: {pos,rot} } } }
+ * Load all pose presets from local data/pose_presets.json.
+ * Returns { [name]: { left: {pos,rot}, right: {pos,rot} } }
  */
 function loadPosePresets() {
-  const presetsPath = getPresetsPath();
-  if (!presetsPath) return {};
+  const presetsPath = getLocalPresetsPath();
   try {
     if (!fs.existsSync(presetsPath)) return {};
     return JSON.parse(fs.readFileSync(presetsPath, 'utf8'));
   } catch (e) {
+    console.warn('[pose-presets] load failed:', e.message);
     return {};
   }
 }
 
 /**
- * Save a named preset.
+ * Save a named preset to local data/pose_presets.json.
  */
 function savePosePreset(name, offsets) {
-  const presetsPath = getPresetsPath();
-  if (!presetsPath) return false;
+  const presetsPath = getLocalPresetsPath();
   try {
     const presets = loadPosePresets();
     presets[name] = offsets;
     fs.writeFileSync(presetsPath, JSON.stringify(presets, null, 2), 'utf8');
     return true;
   } catch (e) {
+    console.warn('[pose-presets] save failed:', e.message);
     return false;
   }
 }
@@ -557,8 +711,7 @@ function savePosePreset(name, offsets) {
  * Delete a named preset.
  */
 function deletePosePreset(name) {
-  const presetsPath = getPresetsPath();
-  if (!presetsPath) return false;
+  const presetsPath = getLocalPresetsPath();
   try {
     const presets = loadPosePresets();
     delete presets[name];
@@ -581,6 +734,7 @@ module.exports = {
   readPoseOffsets,
   writePoseOffsets,
   pushPoseOffsetsToDriver,
+  applyLocalPoseOffsets,
   loadPosePresets,
   savePosePreset,
   deletePosePreset,

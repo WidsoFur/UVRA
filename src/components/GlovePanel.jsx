@@ -14,6 +14,7 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
   const [smoothing, setSmoothing] = useState(0.4);
   const [deadzone, setDeadzone] = useState(0.03);
   const [flexGain, setFlexGain] = useState(1.0);
+  const [thumbGain, setThumbGain] = useState(1.0);
 
   // Load calibration settings on mount
   useEffect(() => {
@@ -23,6 +24,7 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
         setSmoothing(result.calibration.smoothingAlpha);
         setDeadzone(result.calibration.deadzone);
         if (result.calibration.flexGain != null) setFlexGain(result.calibration.flexGain);
+        if (result.calibration.thumbGain != null) setThumbGain(result.calibration.thumbGain);
       }
     });
   }, [hand]);
@@ -43,6 +45,12 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
     const g = parseFloat(val);
     setFlexGain(g);
     if (window.uvra) window.uvra.flexGainSet(hand, g);
+  };
+
+  const handleThumbGainChange = (val) => {
+    const g = parseFloat(val);
+    setThumbGain(g);
+    if (window.uvra) window.uvra.thumbGainSet(hand, g);
   };
 
   const avgCurl = data.flexion
@@ -174,6 +182,25 @@ function GlovePanel({ hand, data, connected, pipeConnected, fps, calibrating, on
               step="0.05"
               value={flexGain}
               onChange={(e) => handleFlexGainChange(e.target.value)}
+              className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
+            />
+            <div className="flex justify-between text-[9px] text-uvra-text-dim mt-0.5">
+              <span>Слабее</span>
+              <span>Сильнее</span>
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-uvra-text-dim">Большой палец (множитель)</span>
+              <span className="text-[10px] text-uvra-accent font-mono">×{thumbGain.toFixed(2)}</span>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="3.0"
+              step="0.05"
+              value={thumbGain}
+              onChange={(e) => handleThumbGainChange(e.target.value)}
               className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
             />
             <div className="flex justify-between text-[9px] text-uvra-text-dim mt-0.5">

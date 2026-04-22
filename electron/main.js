@@ -5,7 +5,7 @@ const UDPServer = require('./udp-server');
 const NamedPipeClient = require('./named-pipe-client');
 const DriverManager = require('./driver-manager');
 const DeviceStore = require('./device-store');
-const { discoverDevices, discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, pushPoseOffsetsToDriver, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
+const { discoverDevices, discoverDevicesFromLog, postTrackingReference, setControllerOverride, getDriverSettings, getVRSettingsPath, readPoseOffsets, writePoseOffsets, pushPoseOffsetsToDriver, applyLocalPoseOffsets, loadPosePresets, savePosePreset, deletePosePreset } = require('./steamvr-devices');
 const { appLogger, rawLogger } = require('./logger');
 
 let mainWindow;
@@ -298,6 +298,14 @@ function setupIPC() {
     return { success: true, gain: pipe.flexGain };
   });
 
+  ipcMain.handle('thumb-gain-set', (_, { hand, gain }) => {
+    const pipe = hand === 'left' ? leftPipe : rightPipe;
+    if (!pipe) return { success: false };
+    pipe.setThumbGain(gain);
+    pipe._saveCalibration();
+    return { success: true, gain: pipe.thumbGain };
+  });
+
   ipcMain.handle('one-euro-set', (_, { hand, minCutoff, beta }) => {
     const pipe = hand === 'left' ? leftPipe : rightPipe;
     if (!pipe) return { success: false };
@@ -582,6 +590,20 @@ app.whenReady().then(() => {
   createWindow();
   initServices();
   setupIPC();
+
+  // Restore saved pose offsets to the running driver (retry a few times
+  // while the driver comes up — it may not be listening on port 52075 yet).
+  const tryRestore = async (attempt = 0) => {
+    const r = await applyLocalPoseOffsets();
+    if (r.success) {
+      appLogger.info('[pose-offsets] restored from local cache');
+    } else if (attempt < 5) {
+      setTimeout(() => tryRestore(attempt + 1), 3000);
+    } else {
+      appLogger.info(`[pose-offsets] restore skipped: ${r.reason}`);
+    }
+  };
+  tryRestore();
 });
 
 app.on('before-quit', () => {

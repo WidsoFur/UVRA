@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('uvra', {
   smoothingSet: (hand, alpha) => ipcRenderer.invoke('smoothing-set', { hand, alpha }),
   deadzoneSet: (hand, deadzone) => ipcRenderer.invoke('deadzone-set', { hand, deadzone }),
   flexGainSet: (hand, gain) => ipcRenderer.invoke('flex-gain-set', { hand, gain }),
+  thumbGainSet: (hand, gain) => ipcRenderer.invoke('thumb-gain-set', { hand, gain }),
   oneEuroSet: (hand, minCutoff, beta) => ipcRenderer.invoke('one-euro-set', { hand, minCutoff, beta }),
   onCalibrationStart: (callback) => {
     const listener = (_, info) => callback(info);

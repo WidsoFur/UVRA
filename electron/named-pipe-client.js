@@ -131,12 +131,22 @@ class NamedPipeClient extends EventEmitter {
       this.fingerFilters.push(new OneEuroFilter(this.oneEuroMinCutoff, this.oneEuroBeta));
     }
 
-    // Deadzone: percentage of range to clamp at edges
-    this.deadzone = 0.03; // 3%
+    // Joystick deadzone: circular, radius in 0..1 of stick range.
+    // Values inside the radius output 0; outside are rescaled so the edge
+    // of the deadzone maps to 0 (no step, smooth ramp).
+    this.deadzone = 0.1; // 10% default
+
+    // Flex edge deadzone: fixed small clamp at calibration min/max to kill
+    // sensor noise at rest / full bend. Not user-configurable.
+    this.flexEdgeDeadzone = 0.03;
 
     // Flex gain: multiplier applied after calibration. 1.0 = no change,
     // >1.0 = fingers bend "more" in VR (half bend → full), <1.0 = dampened.
     this.flexGain = 1.0;
+
+    // Thumb gain: extra multiplier applied only to the thumb, stacks with flexGain.
+    // Thumb sensors often have a smaller dynamic range than other fingers.
+    this.thumbGain = 1.0;
 
     // Dynamic calibration: slowly expand min/max range during use
     this.dynamicCalibration = true;
@@ -313,13 +323,15 @@ class NamedPipeClient extends EventEmitter {
     let val = (normalizedVal - min) / range;
     val = Math.max(0, Math.min(1, val));
 
-    // Apply deadzone at edges
-    if (val < this.deadzone) val = 0;
-    else if (val > 1 - this.deadzone) val = 1;
-    else val = (val - this.deadzone) / (1 - 2 * this.deadzone);
+    // Apply flex edge deadzone (noise clamp at min/max)
+    const fdz = this.flexEdgeDeadzone;
+    if (val < fdz) val = 0;
+    else if (val > 1 - fdz) val = 1;
+    else val = (val - fdz) / (1 - 2 * fdz);
 
-    // Apply flex gain (sensitivity multiplier) and clamp back to [0, 1]
-    if (this.flexGain !== 1.0) {
+    // Apply flex gain to all fingers EXCEPT the thumb.
+    // Thumb uses its own thumbGain (applied later) so the two controls are independent.
+    if (fingerIndex !== 0 && this.flexGain !== 1.0) {
       val = Math.max(0, Math.min(1, val * this.flexGain));
     }
 
@@ -383,14 +395,46 @@ class NamedPipeClient extends EventEmitter {
       this._dynamicCalibrate(i, normalizedVal);
 
       const calibratedVal = this.applyCalibration(normalizedVal, i);
-      const val = this.fingerFilters[i].filter(calibratedVal, now);
+      let val = this.fingerFilters[i].filter(calibratedVal, now);
+
+      // Extra thumb-only multiplier on top of flexGain. Thumb flex sensors
+      // typically have smaller dynamic range, so they can saturate short
+      // of full curl even after calibration.
+      if (i === 0 && this.thumbGain !== 1.0) {
+        val = Math.max(0, Math.min(1, val * this.thumbGain));
+      }
+
       this.smoothed[i] = val; // keep for UI/debug parity
-      flexion.push([val, val, val, val]);
+
+      // Joint[0] is the knuckle (MCP / metacarpal). The thumb's metacarpal
+      // does not flex like other fingers — OpenGloves' skeletal animation
+      // reserves that joint for palm-plane rotation. Sending curl there
+      // eats into the visible bend budget and leaves the thumb ~50% short.
+      if (i === 0) {
+        flexion.push([0, val, val, val]);
+      } else {
+        flexion.push([val, val, val, val]);
+      }
     }
 
     // Smooth joystick
-    const joyX = data.joyX || 0;
-    const joyY = data.joyY || 0;
+    let joyX = data.joyX || 0;
+    let joyY = data.joyY || 0;
+
+    // Circular deadzone: inside radius → 0, outside → rescaled so the
+    // deadzone edge maps to 0 (no abrupt step when crossing the border).
+    if (this.deadzone > 0) {
+      const mag = Math.sqrt(joyX * joyX + joyY * joyY);
+      if (mag < this.deadzone) {
+        joyX = 0;
+        joyY = 0;
+      } else {
+        const scale = (mag - this.deadzone) / ((1 - this.deadzone) * mag);
+        joyX *= scale;
+        joyY *= scale;
+      }
+    }
+
     this.smoothedJoyX = this.smooth(joyX, this.smoothedJoyX);
     this.smoothedJoyY = this.smooth(joyY, this.smoothedJoyY);
 
@@ -498,6 +542,10 @@ class NamedPipeClient extends EventEmitter {
     this.flexGain = Math.max(0.1, Math.min(5.0, gain));
   }
 
+  setThumbGain(gain) {
+    this.thumbGain = Math.max(0.1, Math.min(5.0, gain));
+  }
+
   setOneEuroParams(minCutoff, beta) {
     if (minCutoff != null) this.oneEuroMinCutoff = Math.max(0.01, Math.min(20.0, minCutoff));
     if (beta != null)      this.oneEuroBeta      = Math.max(0.0,  Math.min(1.0,  beta));
@@ -513,6 +561,7 @@ class NamedPipeClient extends EventEmitter {
       oneEuroMinCutoff: this.oneEuroMinCutoff,
       oneEuroBeta: this.oneEuroBeta,
       flexGain: this.flexGain,
+      thumbGain: this.thumbGain,
     };
   }
 
@@ -525,6 +574,7 @@ class NamedPipeClient extends EventEmitter {
       this.setOneEuroParams(cal.oneEuroMinCutoff, cal.oneEuroBeta);
     }
     if (cal.flexGain != null) this.setFlexGain(cal.flexGain);
+    if (cal.thumbGain != null) this.setThumbGain(cal.thumbGain);
     this._saveCalibration();
   }
 
@@ -546,6 +596,7 @@ class NamedPipeClient extends EventEmitter {
         oneEuroMinCutoff: this.oneEuroMinCutoff,
         oneEuroBeta: this.oneEuroBeta,
         flexGain: this.flexGain,
+        thumbGain: this.thumbGain,
       };
       fs.writeFileSync(this._getCalibrationPath(), JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
@@ -566,6 +617,7 @@ class NamedPipeClient extends EventEmitter {
         this.setOneEuroParams(data.oneEuroMinCutoff, data.oneEuroBeta);
       }
       if (data.flexGain != null) this.setFlexGain(data.flexGain);
+      if (data.thumbGain != null) this.setThumbGain(data.thumbGain);
     } catch (e) {
       // silent fail
     }
