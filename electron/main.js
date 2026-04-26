@@ -447,8 +447,16 @@ function setupIPC() {
   ipcMain.handle('tracking-get-devices', async () => {
     try {
       const devices = await discoverDevices(appLogger);
-      // Also check if the OpenGloves driver is reachable
-      const driverSettings = await getDriverSettings();
+      // /settings is best-effort: a failure here must not block the panel,
+      // and we wrap it so any unexpected throw doesn't bubble. Hitting
+      // /devices + /settings in parallel was observed to destabilise the
+      // OpenGloves driver, so we run them sequentially now.
+      let driverSettings = { success: false };
+      try {
+        driverSettings = await getDriverSettings();
+      } catch (e) {
+        appLogger.warn(`getDriverSettings failed: ${e.message}`);
+      }
       return {
         success: true,
         devices,

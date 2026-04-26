@@ -5,7 +5,11 @@
       "Bash(sed -i 's/$/\\\\r/' collect_logs.bat)",
       "Read(//c/c/Users/Kartoshka/Desktop/UVRA/tools/**)",
       "Bash(awk '/\\\\r\\\\r$/{print NR\": double CR\"}' collect_logs.bat)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(mkdir -p extract1 extract2)",
+      "Bash(powershell -NoProfile -Command \"Expand-Archive -Force 'uvra_diagnostics_2026-04-26_21-35-29.zip' 'extract1'; Expand-Archive -Force 'uvra_diagnostics_2026-04-26_21-47-08.zip' 'extract2'\")",
+      "Bash(find \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\logs\\\\extract2\" -name \"manifest.txt\" -exec cat {} \\\\;)",
+      "Bash(awk 'NR==1 || NR==6900 || NR==6913 || NR==6914' \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\logs\\\\extract2\\\\steamvr\\\\vrserver.previous.txt\")"
     ]
   }
 }

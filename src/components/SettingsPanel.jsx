@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Wifi, Save, Server, Cpu, Trash2, Code, Crosshair, RefreshCw, Move3d, Bookmark } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Wifi, Save, Server, Cpu, Trash2, Code, Crosshair, RefreshCw, Move3d, Bookmark, FlaskConical } from 'lucide-react';
 import DevEmulator from './DevEmulator';
 
 function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer, onStopServer, onLog }) {
@@ -20,8 +20,47 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
   const [presetName, setPresetName] = useState('');
   const [liveMode, setLiveMode] = useState(false);
 
+  // Experimental: arc-rotation compensation (tracker mounted on top of glove)
+  const [arcComp, setArcComp] = useState(() => {
+    const fallback = {
+      enabled: false,
+      left:  { armLength: 30, strength: 1.0 },
+      right: { armLength: 30, strength: 1.0 },
+    };
+    try {
+      const raw = localStorage.getItem('uvra.arcComp');
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      // Defensive: if shape is wrong (e.g. older version stored bare {enabled:false})
+      // accessing arcComp[hand].armLength would throw and crash the renderer.
+      if (!parsed || !parsed.left || !parsed.right) return fallback;
+      return {
+        enabled: !!parsed.enabled,
+        left:  { armLength: +parsed.left.armLength  || 30, strength: +parsed.left.strength  || 1.0 },
+        right: { armLength: +parsed.right.armLength || 30, strength: +parsed.right.strength || 1.0 },
+      };
+    } catch {
+      return fallback;
+    }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('uvra.arcComp', JSON.stringify(arcComp)); } catch {}
+  }, [arcComp]);
+
+  const updateArcComp = (hand, key, value) => {
+    setArcComp(prev => ({ ...prev, [hand]: { ...prev[hand], [key]: parseFloat(value) } }));
+  };
+
+  // Guard against React.StrictMode double-firing of mount effects.
+  // Without this, every mount runs each useEffect twice in dev — which means
+  // 2× HTTP /devices + 2× /settings hits the OpenGloves driver in parallel,
+  // and that has been observed to crash vrserver.
+  const mountedRef = useRef(false);
+
   // Load saved devices on mount
   useEffect(() => {
+    if (mountedRef.current) return;
     if (!window.uvra) return;
     window.uvra.deviceGetAll().then(setDevices);
   }, []);
@@ -89,21 +128,22 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
     setLoadingDevices(false);
   }, [onLog]);
 
-  // Load SteamVR devices on mount
+  // Load SteamVR devices + pose offsets + presets on mount.
+  // Guarded ref + flag so StrictMode's intentional double-invocation doesn't
+  // hammer the OpenGloves driver with parallel /devices + /settings calls.
   useEffect(() => {
+    if (mountedRef.current) return;
+    mountedRef.current = true;
     loadSteamVRDevices();
+    if (window.uvra) {
+      window.uvra.poseOffsetsGet().then((result) => {
+        if (result?.success) setPoseOffsets(result.offsets);
+      });
+      window.uvra.posePresetsList().then((result) => {
+        if (result?.success) setPresets(result.presets || {});
+      });
+    }
   }, [loadSteamVRDevices]);
-
-  // Load pose offsets and presets on mount
-  useEffect(() => {
-    if (!window.uvra) return;
-    window.uvra.poseOffsetsGet().then((result) => {
-      if (result.success) setPoseOffsets(result.offsets);
-    });
-    window.uvra.posePresetsList().then((result) => {
-      if (result.success) setPresets(result.presets || {});
-    });
-  }, []);
 
   const handleSelectPreset = (name) => {
     setSelectedPreset(name);
@@ -134,26 +174,61 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
     }
   };
 
+  // Throttled live push. Slider drag fires onChange ~per pixel; without a gate
+  // we'd send 60-120 POSTs/sec to the OpenGloves driver (×2 hands), which has
+  // been observed to crash vrserver. Cap at ~30 Hz with leading + trailing.
+  // We also keep `liveMode` in a ref so the trailing flush sees the latest value
+  // (otherwise a queued push could fire after the user disabled the toggle).
+  const livePushRef = useRef({ last: 0, pending: null, timer: null });
+  const liveModeRef = useRef(false);
+  useEffect(() => { liveModeRef.current = liveMode; }, [liveMode]);
+
+  const flushLivePush = useCallback(() => {
+    const r = livePushRef.current;
+    r.timer = null;
+    if (!r.pending) return;
+    const payload = r.pending;
+    r.pending = null;
+    r.last = Date.now();
+    if (!liveModeRef.current) return; // live mode was turned off while throttled
+    if (window.uvra?.poseOffsetsPushLive) window.uvra.poseOffsetsPushLive(payload);
+  }, []);
+  const schedulePush = useCallback((next) => {
+    const r = livePushRef.current;
+    const now = Date.now();
+    const sinceLast = now - r.last;
+    const minGap = 33; // ~30 Hz
+    if (sinceLast >= minGap && !r.timer) {
+      r.last = now;
+      if (window.uvra?.poseOffsetsPushLive) window.uvra.poseOffsetsPushLive(next);
+      return;
+    }
+    r.pending = next;
+    if (!r.timer) r.timer = setTimeout(flushLivePush, minGap - sinceLast);
+  }, [flushLivePush]);
+
+  // Cleanup pending timer on unmount
+  useEffect(() => () => {
+    const r = livePushRef.current;
+    if (r.timer) { clearTimeout(r.timer); r.timer = null; }
+  }, []);
+
   const updateOffset = (hand, group, axis, value) => {
     const num = parseFloat(value);
     if (isNaN(num)) return;
+    // Build next state synchronously from the previous (no side-effects in updater).
+    let next = null;
     setPoseOffsets(prev => {
-      const next = {
+      next = {
         ...prev,
         [hand]: {
           ...prev[hand],
-          [group]: {
-            ...prev[hand][group],
-            [axis]: num,
-          },
+          [group]: { ...prev[hand][group], [axis]: num },
         },
       };
-      // Live mode: push to running driver immediately (no file write).
-      if (liveMode && window.uvra?.poseOffsetsPushLive) {
-        window.uvra.poseOffsetsPushLive(next);
-      }
       return next;
     });
+    if (liveMode && next) schedulePush(next);
   };
 
   const handleSaveOffsets = async () => {
@@ -540,6 +615,83 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
                           </div>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Experimental: arc-rotation compensation */}
+        <div className="bg-uvra-card rounded-xl border border-uvra-border p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <FlaskConical size={16} className="text-uvra-warning" />
+              <h2 className="text-sm font-semibold text-uvra-text">Компенсация дуги вращения</h2>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-uvra-warning/20 text-uvra-warning uppercase tracking-wider">
+                Тестовая
+              </span>
+            </div>
+            <button
+              onClick={() => setArcComp(prev => ({ ...prev, enabled: !prev.enabled }))}
+              className={`
+                px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                ${arcComp.enabled
+                  ? 'bg-uvra-success/20 text-uvra-success animate-pulse'
+                  : 'bg-uvra-border text-uvra-text-dim hover:bg-uvra-accent/20'}
+              `}
+            >
+              {arcComp.enabled ? '● Включено' : '○ Выключено'}
+            </button>
+          </div>
+
+          <p className="text-[11px] text-uvra-text-dim mb-4 leading-relaxed">
+            Компенсирует смещение руки по дуге, когда трекер закреплён сверху перчатки.
+            Задайте расстояние от центра трекера до оси вращения запястья.
+          </p>
+
+          {arcComp.enabled && (
+            <div className="grid grid-cols-2 gap-3">
+              {['left', 'right'].map((hand) => (
+                <div key={hand} className="bg-uvra-bg/50 border border-uvra-border rounded-lg p-3">
+                  <div className="text-xs font-semibold text-uvra-text mb-3">
+                    {hand === 'left' ? 'Левая' : 'Правая'}
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-uvra-text-dim">Длина рычага (мм)</span>
+                        <span className="text-[10px] text-uvra-accent font-mono">
+                          {arcComp[hand].armLength.toFixed(0)} мм
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={arcComp[hand].armLength}
+                        onChange={(e) => updateArcComp(hand, 'armLength', e.target.value)}
+                        className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-uvra-text-dim">Сила компенсации</span>
+                        <span className="text-[10px] text-uvra-accent font-mono">
+                          ×{arcComp[hand].strength.toFixed(2)}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        value={arcComp[hand].strength}
+                        onChange={(e) => updateArcComp(hand, 'strength', e.target.value)}
+                        className="w-full h-1.5 bg-uvra-border rounded-full appearance-none cursor-pointer accent-uvra-accent"
+                      />
                     </div>
                   </div>
                 </div>
