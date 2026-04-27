@@ -9,7 +9,16 @@
       "Bash(mkdir -p extract1 extract2)",
       "Bash(powershell -NoProfile -Command \"Expand-Archive -Force 'uvra_diagnostics_2026-04-26_21-35-29.zip' 'extract1'; Expand-Archive -Force 'uvra_diagnostics_2026-04-26_21-47-08.zip' 'extract2'\")",
       "Bash(find \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\logs\\\\extract2\" -name \"manifest.txt\" -exec cat {} \\\\;)",
-      "Bash(awk 'NR==1 || NR==6900 || NR==6913 || NR==6914' \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\logs\\\\extract2\\\\steamvr\\\\vrserver.previous.txt\")"
+      "Bash(awk 'NR==1 || NR==6900 || NR==6913 || NR==6914' \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\logs\\\\extract2\\\\steamvr\\\\vrserver.previous.txt\")",
+      "Bash(powershell -NoProfile -Command \"Expand-Archive -Force 'uvra_diagnostics_2026-04-27_17-41-54.zip' 'new'\")",
+      "Bash(powershell -NoProfile -Command 'Select-String -Path '\\\\''C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\opengloves\\\\bin\\\\win64\\\\driver_opengloves.dll'\\\\'' -Pattern '\\\\''/settings'\\\\'','\\\\''/devices'\\\\'','\\\\''/functions'\\\\'','\\\\''pose_offset'\\\\'','\\\\''controller_override'\\\\'' -Encoding Byte 2>$null | ForEach-Object { $_.Line } | Sort-Object -Unique')",
+      "PowerShell($b=[System.IO.File]::ReadAllBytes\\('C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\UVRA\\\\opengloves\\\\bin\\\\win64\\\\driver_opengloves.dll'\\); $s=[System.Text.Encoding]::ASCII.GetString\\($b\\); [regex]::Matches\\($s,'[\\\\x20-\\\\x7E]{6,}'\\) | ForEach-Object { $_.Value } | Select-String -Pattern '/settings|/devices|/functions|pose_offset|52075|httplib|HTTP/1' | Select-Object -First 100 -Unique)",
+      "Read(//c/Users/Kartoshka/source/**)",
+      "Read(//c/Users/Kartoshka/**)",
+      "Bash(cmake --build build --config Release --target driver_opengloves)",
+      "PowerShell(cmake --build \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\opengloves-driver\\\\build\" --config Release --target driver_opengloves 2>&1)",
+      "PowerShell($cands = @\\( 'C:\\\\Program Files\\\\CMake\\\\bin\\\\cmake.exe', 'C:\\\\Program Files \\(x86\\)\\\\CMake\\\\bin\\\\cmake.exe', \"$env:LOCALAPPDATA\\\\Programs\\\\CMake\\\\bin\\\\cmake.exe\" \\); $cands | Where-Object { Test-Path $_ }; Get-ChildItem 'C:\\\\Program Files\\\\Microsoft Visual Studio' -Filter cmake.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 3 -ExpandProperty FullName)",
+      "PowerShell($cmake='C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Enterprise\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\CMake\\\\bin\\\\cmake.exe'; & $cmake --build \"C:\\\\Users\\\\Kartoshka\\\\Desktop\\\\opengloves-driver\\\\build\" --config Release --target driver_opengloves 2>&1 | Select-Object -Last 40)"
     ]
   }
 }

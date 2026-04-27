@@ -129,8 +129,14 @@ function SettingsPanel({ serverPort, onPortChange, serverRunning, onStartServer,
   }, [onLog]);
 
   // Load SteamVR devices + pose offsets + presets on mount.
-  // Guarded ref + flag so StrictMode's intentional double-invocation doesn't
-  // hammer the OpenGloves driver with parallel /devices + /settings calls.
+  //
+  // Auto-loading SteamVR devices was previously disabled because parallel
+  // GET /devices + /settings against the OpenGloves driver crashed vrserver.
+  // The driver itself was patched (g_openvr_api_mutex + try/catch around
+  // GET handlers + single-flight /devices cache + err-checked GetStringProperty
+  // — see driver_external.cpp), so the auto-call is safe again. We still keep
+  // the StrictMode mountedRef guard so dev double-invocation doesn't fire two
+  // refreshes back-to-back.
   useEffect(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
